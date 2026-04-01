@@ -834,6 +834,8 @@ Route::group(
         Route::post('bank-connections', ['uses' => 'BankConnectionController@store', 'as' => 'bank-connections.store']);
         Route::post('bank-connections/{id}/validate-token', ['uses' => 'BankConnectionController@validateToken', 'as' => 'bank-connections.validate-token']);
         Route::post('bank-connections/{id}/refresh-accounts', ['uses' => 'BankConnectionController@refreshAccounts', 'as' => 'bank-connections.refresh-accounts']);
+        Route::post('bank-connections/{id}/sync', ['uses' => 'BankConnectionController@sync', 'as' => 'bank-connections.sync']);
+        Route::post('bank-connections/{id}/accounts/{accountId}', ['uses' => 'BankConnectionController@updateMapping', 'as' => 'bank-connections.accounts.update']);
     }
 );
 

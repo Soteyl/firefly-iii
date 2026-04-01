@@ -83,6 +83,10 @@
                                         <input name="_token" type="hidden" value="{{ csrf_token() }}">
                                         <button type="submit" class="btn btn-default">{{ 'refresh_accounts'|_ }}</button>
                                     </form>
+                                    <form method="POST" action="{{ route('preferences.bank-connections.sync', connection.id) }}" style="display:inline;">
+                                        <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-primary">{{ 'sync_now'|_ }}</button>
+                                    </form>
                                 </div>
 
                                 <hr>
@@ -98,6 +102,7 @@
                                                 <th>{{ 'currency'|_ }}</th>
                                                 <th>{{ 'mapped_firefly_account'|_ }}</th>
                                                 <th>{{ 'status'|_ }}</th>
+                                                <th>{{ 'actions'|_ }}</th>
                                             </tr>
                                             </thead>
                                             <tbody>
@@ -114,18 +119,24 @@
                                                     </td>
                                                     <td>{{ account.mono_currency_code ?: 'n/a' }}</td>
                                                     <td>
-                                                        {% if account.fireflyAccount %}
-                                                            {{ account.fireflyAccount.name }}
-                                                        {% else %}
-                                                            <span class="text-muted">{{ 'not_mapped_yet'|_ }}</span>
-                                                        {% endif %}
+                                                        <form method="POST" action="{{ route('preferences.bank-connections.accounts.update', [connection.id, account.id]) }}">
+                                                            <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                                            <select name="firefly_account_id" class="form-control input-sm">
+                                                                <option value="">{{ 'not_mapped_yet'|_ }}</option>
+                                                                {% for fireflyAccount in assetAccounts %}
+                                                                    <option value="{{ fireflyAccount.id }}" {% if account.firefly_account_id == fireflyAccount.id %}selected{% endif %}>{{ fireflyAccount.name }}</option>
+                                                                {% endfor %}
+                                                            </select>
                                                     </td>
                                                     <td>
-                                                        {% if account.enabled %}
-                                                            <span class="label label-success">{{ 'enabled'|_ }}</span>
-                                                        {% else %}
-                                                            <span class="label label-default">{{ 'disabled'|_ }}</span>
-                                                        {% endif %}
+                                                            <label class="checkbox-inline" style="margin-top:0;">
+                                                                <input type="checkbox" name="enabled" value="1" {% if account.enabled %}checked{% endif %}>
+                                                                {{ account.enabled ? 'enabled'|_ : 'disabled'|_ }}
+                                                            </label>
+                                                    </td>
+                                                    <td>
+                                                            <button type="submit" class="btn btn-xs btn-default">{{ 'save_mapping'|_ }}</button>
+                                                        </form>
                                                     </td>
                                                 </tr>
                                             {% endfor %}
