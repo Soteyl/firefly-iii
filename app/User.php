@@ -32,6 +32,7 @@ use FireflyIII\Exceptions\FireflyException;
 use FireflyIII\Models\Account;
 use FireflyIII\Models\Attachment;
 use FireflyIII\Models\AvailableBudget;
+use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\Bill;
 use FireflyIII\Models\Budget;
 use FireflyIII\Models\Category;
@@ -133,6 +134,11 @@ class User extends Authenticatable
     public function bills(): HasMany
     {
         return $this->hasMany(Bill::class);
+    }
+
+    public function bankConnections(): HasMany
+    {
+        return $this->hasMany(BankConnection::class);
     }
 
     /**
