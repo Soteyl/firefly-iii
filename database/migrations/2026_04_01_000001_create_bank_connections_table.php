@@ -16,11 +16,11 @@ return new class extends Migration {
     {
         if (!Schema::hasTable('bank_connections')) {
             Schema::create('bank_connections', static function (Blueprint $table): void {
-                $table->id();
+                $table->increments('id');
                 $table->timestamps();
 
-                $table->bigInteger('user_id', false, true);
-                $table->bigInteger('user_group_id', false, true);
+                $table->unsignedInteger('user_id');
+                $table->unsignedBigInteger('user_group_id');
                 $table->string('provider', 50);
                 $table->string('status', 50)->default('pending');
                 $table->text('access_token');

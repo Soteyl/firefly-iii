@@ -16,16 +16,16 @@ return new class extends Migration {
     {
         if (!Schema::hasTable('bank_connection_accounts')) {
             Schema::create('bank_connection_accounts', static function (Blueprint $table): void {
-                $table->id();
+                $table->increments('id');
                 $table->timestamps();
 
-                $table->bigInteger('bank_connection_id', false, true);
+                $table->unsignedInteger('bank_connection_id');
                 $table->string('mono_account_id', 255);
                 $table->string('mono_account_type', 50)->nullable();
                 $table->unsignedInteger('mono_currency_code')->nullable();
                 $table->string('mono_masked_pan', 32)->nullable();
                 $table->string('mono_iban', 64)->nullable();
-                $table->bigInteger('firefly_account_id', false, true)->nullable();
+                $table->unsignedInteger('firefly_account_id')->nullable();
                 $table->boolean('enabled')->default(true);
                 $table->bigInteger('sync_from_ts')->nullable();
                 $table->bigInteger('last_synced_statement_ts')->nullable();
