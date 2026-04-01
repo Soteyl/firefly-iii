@@ -18,7 +18,7 @@ return new class extends Migration {
             Schema::create('bank_sync_runs', static function (Blueprint $table): void {
                 $table->increments('id');
 
-                $table->unsignedInteger('bank_connection_id');
+                $table->unsignedBigInteger('bank_connection_id');
                 $table->string('trigger', 50);
                 $table->string('status', 50)->default('pending');
                 $table->dateTime('started_at');

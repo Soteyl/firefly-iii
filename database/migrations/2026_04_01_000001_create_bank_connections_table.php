@@ -16,7 +16,7 @@ return new class extends Migration {
     {
         if (!Schema::hasTable('bank_connections')) {
             Schema::create('bank_connections', static function (Blueprint $table): void {
-                $table->increments('id');
+                $table->id();
                 $table->timestamps();
 
                 $table->unsignedInteger('user_id');

@@ -19,7 +19,7 @@ return new class extends Migration {
                 $table->increments('id');
                 $table->timestamps();
 
-                $table->unsignedInteger('bank_connection_id');
+                $table->unsignedBigInteger('bank_connection_id');
                 $table->string('mono_account_id', 255);
                 $table->string('mono_account_type', 50)->nullable();
                 $table->unsignedInteger('mono_currency_code')->nullable();

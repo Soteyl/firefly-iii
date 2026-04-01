@@ -18,7 +18,7 @@ return new class extends Migration {
             Schema::create('bank_sync_events', static function (Blueprint $table): void {
                 $table->increments('id');
 
-                $table->unsignedInteger('bank_connection_id')->nullable();
+                $table->unsignedBigInteger('bank_connection_id')->nullable();
                 $table->string('event_type', 50);
                 $table->json('payload_json')->nullable();
                 $table->dateTime('processed_at')->nullable();
