@@ -37,7 +37,9 @@ final class MonobankPollCronjobTest extends TestCase
         ]);
 
         $mock = Mockery::mock(BankSyncService::class);
-        $mock->shouldReceive('syncConnection')->once()->with($active, 'poll');
+        $mock->shouldReceive('syncConnection')->once()->withArgs(
+            static fn (BankConnection $connection, string $trigger): bool => $connection->id === $active->id && 'poll' === $trigger
+        );
         app()->instance(BankSyncService::class, $mock);
 
         $cron = new MonobankPollCronjob();
