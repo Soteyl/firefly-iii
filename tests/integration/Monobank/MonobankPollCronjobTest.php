@@ -42,6 +42,8 @@ final class MonobankPollCronjobTest extends TestCase
         );
         app()->instance(BankSyncService::class, $mock);
 
+        FireflyConfig::set('last_monobank_poll_job', 0);
+
         $firstRunAt = now(config('app.timezone'));
         $cron = new MonobankPollCronjob();
         $cron->setDate($firstRunAt);
