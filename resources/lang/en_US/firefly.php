@@ -170,6 +170,7 @@ return [
     'bank_account_mapping_saved'                          => 'Monobank account mapping saved.',
     'bank_connection_synced'                              => 'Monobank sync finished. Imported :count transaction.|Monobank sync finished. Imported :count transactions.',
     'webhook_enabled'                                     => 'Webhook enabled',
+    'webhook_registered'                                  => 'Webhook registered',
     'last_successful_sync'                                => 'Last successful sync',
     'sync_now'                                            => 'Sync now',
     'save_mapping'                                        => 'Save mapping',

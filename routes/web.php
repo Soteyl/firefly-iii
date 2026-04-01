@@ -87,6 +87,10 @@ Route::group(
     }
 );
 
+Route::match(['GET', 'POST'], 'monobank/webhook/{secret}', [\FireflyIII\Http\Controllers\MonobankWebhookController::class, 'handle'])
+    ->name('monobank.webhook')
+    ->withoutMiddleware([\FireflyIII\Http\Middleware\VerifyCsrfToken::class]);
+
 // These routes only work when the user is NOT logged in.
 Route::group(
     ['middleware' => ['user-not-logged-in'], 'namespace' => 'FireflyIII\Http\Controllers'],

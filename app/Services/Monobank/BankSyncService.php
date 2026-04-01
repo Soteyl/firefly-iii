@@ -17,6 +17,7 @@ class BankSyncService
         private readonly MonobankClient $client,
         private readonly MonobankAccountMapper $accountMapper,
         private readonly MonobankImportService $importService,
+        private readonly MonobankWebhookManager $webhookManager,
     ) {
     }
 
@@ -28,8 +29,16 @@ class BankSyncService
         $clientInfo = $this->client->getClientInfo((string) $connection->access_token);
 
         $accounts = $this->accountMapper->syncConnectionAccounts($connection, $clientInfo);
+        try {
+            $this->webhookManager->registerWebhook($connection);
+        } catch (MonobankException $e) {
+            $connection->webhook_enabled = false;
+            $connection->last_error_message = $e->getMessage();
+        }
         $connection->status = 'active';
-        $connection->last_error_message = null;
+        if (true === $connection->webhook_enabled) {
+            $connection->last_error_message = null;
+        }
         $connection->last_successful_sync_at = now();
         $connection->save();
 
