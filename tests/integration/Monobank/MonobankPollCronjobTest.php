@@ -16,6 +16,7 @@ final class MonobankPollCronjobTest extends TestCase
     public function testPollsActiveConnectionsAndHonorsCooldown(): void
     {
         $user = $this->createAuthenticatedUser();
+        $otherUser = $this->createAuthenticatedUser();
 
         $active = BankConnection::create([
             'user_id'             => $user->id,
@@ -27,8 +28,8 @@ final class MonobankPollCronjobTest extends TestCase
         ]);
 
         BankConnection::create([
-            'user_id'             => $user->id,
-            'user_group_id'       => $user->user_group_id,
+            'user_id'             => $otherUser->id,
+            'user_group_id'       => $otherUser->user_group_id,
             'provider'            => 'monobank',
             'status'              => 'disabled',
             'access_token'        => 'token-abcdefghij',
