@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\integration\Monobank;
 
+use Carbon\Carbon;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Services\Monobank\BankSyncService;
 use FireflyIII\Support\Cronjobs\MonobankPollCronjob;
@@ -42,13 +43,16 @@ final class MonobankPollCronjobTest extends TestCase
         );
         app()->instance(BankSyncService::class, $mock);
 
+        $firstRunAt = Carbon::create(2026, 4, 1, 12, 0, 0, config('app.timezone'));
         $cron = new MonobankPollCronjob();
+        $cron->setDate($firstRunAt);
         $cron->fire();
 
         $this->assertTrue($cron->jobFired);
         $this->assertTrue($cron->jobSucceeded);
 
         $cooldownCron = new MonobankPollCronjob();
+        $cooldownCron->setDate((clone $firstRunAt)->addMinute());
         $cooldownCron->fire();
 
         $this->assertFalse($cooldownCron->jobFired);
