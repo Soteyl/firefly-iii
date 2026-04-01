@@ -152,13 +152,13 @@ class MonobankTransactionMapper
         return implode("\n", $parts);
     }
 
-    private function timestamp(array $statement): string
+    private function timestamp(array $statement): Carbon
     {
         $timestamp = (int) ($statement['time'] ?? 0);
         if ($timestamp <= 0) {
-            return now()->toDateTimeString();
+            return now();
         }
 
-        return Carbon::createFromTimestamp($timestamp, config('app.timezone'))->toDateTimeString();
+        return Carbon::createFromTimestamp($timestamp, config('app.timezone'));
     }
 }
