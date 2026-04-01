@@ -695,6 +695,14 @@ Breadcrumbs::for(
     }
 );
 
+Breadcrumbs::for(
+    'preferences.bank-connections.index',
+    static function (Generator $breadcrumbs): void {
+        $breadcrumbs->parent('preferences.index');
+        $breadcrumbs->push(trans('breadcrumbs.bank_connections'), route('preferences.bank-connections.index'));
+    }
+);
+
 
 
 Breadcrumbs::for(

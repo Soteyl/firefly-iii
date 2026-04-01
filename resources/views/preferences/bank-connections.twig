@@ -1,0 +1,143 @@
+{% extends './layout/default' %}
+
+{% block breadcrumbs %}
+    {{ Breadcrumbs.render(Route.getCurrentRoute.getName) }}
+{% endblock %}
+
+{% block content %}
+    <div class="row">
+        <div class="col-lg-5 col-md-5 col-sm-12 col-xs-12">
+            <div class="box box-primary">
+                <div class="box-header with-border">
+                    <h3 class="box-title">{{ 'connect_monobank'|_ }}</h3>
+                </div>
+                <form method="POST" action="{{ route('preferences.bank-connections.store') }}">
+                    <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                    <div class="box-body">
+                        <p class="text-info">{{ 'connect_monobank_help'|_ }}</p>
+                        <div class="form-group">
+                            <label for="access_token">{{ 'monobank_token'|_ }}</label>
+                            <input type="password" class="form-control" id="access_token" name="access_token"
+                                   value="{{ old('access_token') }}" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="box-footer">
+                        <button type="submit" class="btn btn-primary">{{ 'save_and_refresh_accounts'|_ }}</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="col-lg-7 col-md-7 col-sm-12 col-xs-12">
+            <div class="box box-default">
+                <div class="box-header with-border">
+                    <h3 class="box-title">{{ 'bank_connections'|_ }}</h3>
+                </div>
+                <div class="box-body">
+                    {% if errors.any %}
+                        <div class="alert alert-danger" role="alert">
+                            <ul>
+                                {% for bag in errors.getBags %}
+                                    {% for error in bag.all %}
+                                        <li>{{ error }}</li>
+                                    {% endfor %}
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    {% endif %}
+
+                    {% if connections|length == 0 %}
+                        <p class="text-muted">{{ 'no_bank_connections_yet'|_ }}</p>
+                    {% endif %}
+
+                    {% for connection in connections %}
+                        <div class="panel panel-default">
+                            <div class="panel-heading">
+                                <strong>{{ connection.provider|capitalize }}</strong>
+                                <span class="label label-default">{{ connection.status }}</span>
+                            </div>
+                            <div class="panel-body">
+                                <p>
+                                    <strong>{{ 'webhook_enabled'|_ }}:</strong>
+                                    {{ connection.webhook_enabled ? 'yes'|_ : 'no'|_ }}
+                                    <br>
+                                    <strong>{{ 'last_successful_sync'|_ }}:</strong>
+                                    {% if connection.last_successful_sync_at %}
+                                        {{ connection.last_successful_sync_at.format('Y-m-d H:i:s') }}
+                                    {% else %}
+                                        {{ 'never'|_ }}
+                                    {% endif %}
+                                </p>
+
+                                {% if connection.last_error_message %}
+                                    <div class="alert alert-warning">
+                                        {{ connection.last_error_message }}
+                                    </div>
+                                {% endif %}
+
+                                <div class="btn-group">
+                                    <form method="POST" action="{{ route('preferences.bank-connections.validate-token', connection.id) }}" style="display:inline;">
+                                        <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-default">{{ 'validate_token'|_ }}</button>
+                                    </form>
+                                    <form method="POST" action="{{ route('preferences.bank-connections.refresh-accounts', connection.id) }}" style="display:inline;">
+                                        <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-default">{{ 'refresh_accounts'|_ }}</button>
+                                    </form>
+                                </div>
+
+                                <hr>
+                                <h4>{{ 'monobank_accounts'|_ }}</h4>
+                                {% if connection.bankConnectionAccounts|length == 0 %}
+                                    <p class="text-muted">{{ 'no_monobank_accounts'|_ }}</p>
+                                {% else %}
+                                    <div class="table-responsive">
+                                        <table class="table table-striped">
+                                            <thead>
+                                            <tr>
+                                                <th>{{ 'account'|_ }}</th>
+                                                <th>{{ 'currency'|_ }}</th>
+                                                <th>{{ 'mapped_firefly_account'|_ }}</th>
+                                                <th>{{ 'status'|_ }}</th>
+                                            </tr>
+                                            </thead>
+                                            <tbody>
+                                            {% for account in connection.bankConnectionAccounts %}
+                                                <tr>
+                                                    <td>
+                                                        <code>{{ account.mono_account_id }}</code>
+                                                        {% if account.mono_masked_pan %}
+                                                            <br><small>{{ account.mono_masked_pan }}</small>
+                                                        {% endif %}
+                                                        {% if account.mono_iban %}
+                                                            <br><small>{{ account.mono_iban }}</small>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>{{ account.mono_currency_code ?: 'n/a' }}</td>
+                                                    <td>
+                                                        {% if account.fireflyAccount %}
+                                                            {{ account.fireflyAccount.name }}
+                                                        {% else %}
+                                                            <span class="text-muted">{{ 'not_mapped_yet'|_ }}</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {% if account.enabled %}
+                                                            <span class="label label-success">{{ 'enabled'|_ }}</span>
+                                                        {% else %}
+                                                            <span class="label label-default">{{ 'disabled'|_ }}</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                            {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}

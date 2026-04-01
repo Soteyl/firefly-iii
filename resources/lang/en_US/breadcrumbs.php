@@ -38,6 +38,7 @@ return [
     'newPiggyBank'           => 'Create a new piggy bank',
     'edit_piggyBank'         => 'Edit piggy bank ":name"',
     'preferences'            => 'Preferences',
+    'bank_connections'       => 'Bank connections',
     'profile'                => 'Profile',
     'accounts'               => 'Accounts',
     'changePassword'         => 'Change your password',
