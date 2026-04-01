@@ -49,7 +49,13 @@ final class MonobankImportServiceTest extends TestCase
         $this->assertSame(0, $firstRun->stats_json['duplicates']);
         $this->assertSame(0, $secondRun->stats_json['imported']);
         $this->assertSame(1, $secondRun->stats_json['duplicates']);
-        $this->assertSame(1, TransactionJournalMeta::where('name', 'external_id')->count());
+        $this->assertSame(
+            1,
+            TransactionJournalMeta::query()
+                ->where('name', 'external_id')
+                ->where('data', json_encode('monobank:mono-account-1:statement-1'))
+                ->count()
+        );
 
         $this->mapping->refresh();
         $this->assertSame('statement-1', $this->mapping->last_seen_statement_id);
