@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace FireflyIII\Services\Monobank;
 
+use Carbon\Carbon;
 use FireflyIII\Exceptions\FireflyException;
 use FireflyIII\Exceptions\MonobankException;
+use FireflyIII\Models\Transaction;
+use FireflyIII\Models\TransactionJournal;
+use FireflyIII\Models\TransactionType;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
 use FireflyIII\Models\BankSyncRun;
@@ -136,6 +140,12 @@ class MonobankImportService
                 ++$stats['skipped'];
                 continue;
             }
+            if ($this->matchesExistingJournal($connection, $mapped['transactions'][0] ?? [])) {
+                ++$stats['duplicates'];
+                $lastSeenId = (string) ($statement['id'] ?? $lastSeenId);
+                $lastSyncedTime = max((int) $lastSyncedTime, (int) ($statement['time'] ?? 0));
+                continue;
+            }
 
             $this->transactionGroupRepository->store($mapped);
             ++$stats['imported'];
@@ -176,5 +186,67 @@ class MonobankImportService
             })
             ->exists()
         ;
+    }
+
+    private function matchesExistingJournal(BankConnection $connection, array $transaction): bool
+    {
+        $type = (string) ($transaction['type'] ?? '');
+        $description = trim((string) ($transaction['description'] ?? ''));
+        $date = $transaction['date'] ?? null;
+        $amount = (string) ($transaction['amount'] ?? '');
+        if ('' === $type || '' === $description || '' === $amount || !$date instanceof \DateTimeInterface) {
+            return false;
+        }
+
+        $transactionType = TransactionType::query()->where('type', $type)->first();
+        if (!$transactionType instanceof TransactionType) {
+            return false;
+        }
+
+        $mappedAccountId = $this->mappedAccountId($transaction);
+        if (null === $mappedAccountId) {
+            return false;
+        }
+
+        $signedAmount = $this->signedAmount($transaction);
+        $counterAmount = bcsub('0', $signedAmount, 12);
+        $from = Carbon::instance($date)->copy()->subHours(3);
+        $to = Carbon::instance($date)->copy()->addHours(3);
+
+        return TransactionJournal::query()
+            ->where('user_id', $connection->user_id)
+            ->where('transaction_type_id', $transactionType->id)
+            ->where('description', $description)
+            ->whereBetween('date', [$from->format('Y-m-d H:i:s'), $to->format('Y-m-d H:i:s')])
+            ->whereHas('transactions', static function ($query) use ($mappedAccountId, $signedAmount): void {
+                $query->where('account_id', $mappedAccountId)->where('amount', $signedAmount);
+            })
+            ->whereHas('transactions', static function ($query) use ($counterAmount): void {
+                $query->where('amount', $counterAmount);
+            })
+            ->exists()
+        ;
+    }
+
+    private function mappedAccountId(array $transaction): ?int
+    {
+        if (isset($transaction['source_id']) && null !== $transaction['source_id']) {
+            return (int) $transaction['source_id'];
+        }
+        if (isset($transaction['destination_id']) && null !== $transaction['destination_id']) {
+            return (int) $transaction['destination_id'];
+        }
+
+        return null;
+    }
+
+    private function signedAmount(array $transaction): string
+    {
+        $amount = (string) ($transaction['amount'] ?? '0');
+
+        return match ((string) ($transaction['type'] ?? '')) {
+            'Withdrawal' => sprintf('-%s', ltrim($amount, '-')),
+            default      => ltrim($amount, '+'),
+        };
     }
 }

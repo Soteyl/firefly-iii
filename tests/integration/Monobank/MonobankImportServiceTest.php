@@ -12,6 +12,7 @@ use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Services\Monobank\MonobankClient;
 use FireflyIII\Services\Monobank\MonobankAccountMapper;
 use FireflyIII\Services\Monobank\MonobankImportService;
+use FireflyIII\Repositories\TransactionGroup\TransactionGroupRepositoryInterface;
 use FireflyIII\User;
 use Mockery;
 use Override;
@@ -86,6 +87,64 @@ final class MonobankImportServiceTest extends TestCase
         $this->mapping->refresh();
         $this->assertSame('statement-1', $this->mapping->last_seen_statement_id);
         $this->assertSame($statement['time'], $this->mapping->last_synced_statement_ts);
+    }
+
+    public function testSkipsStatementWhenMatchingTransactionAlreadyExistsWithoutMonobankExternalId(): void
+    {
+        $statementTime = now()->subDay()->setTime(20, 59, 32);
+        $counterparty = Account::factory()
+            ->for($this->user)
+            ->withType(AccountTypeEnum::EXPENSE)
+            ->create(['name' => 'YouTube'])
+        ;
+
+        /** @var TransactionGroupRepositoryInterface $repository */
+        $repository = app(TransactionGroupRepositoryInterface::class);
+
+        $repository->store([
+            'user'             => $this->user,
+            'user_group'       => $this->user->userGroup,
+            'apply_rules'      => false,
+            'fire_webhooks'    => false,
+            'batch_submission' => false,
+            'transactions'     => [[
+                'type'             => 'Withdrawal',
+                'date'             => $statementTime->copy()->addHours(2),
+                'amount'           => '149.00',
+                'currency_code'    => 'UAH',
+                'description'      => 'YouTube',
+                'source_id'        => $this->assetAccount->id,
+                'destination_id'   => $counterparty->id,
+            ]],
+        ]);
+
+        $statement = [
+            'id'           => 'statement-existing-match',
+            'time'         => $statementTime->timestamp,
+            'amount'       => -14900,
+            'currencyCode' => 980,
+            'description'  => 'YouTube',
+        ];
+
+        $mock = Mockery::mock(MonobankClient::class);
+        $mock->shouldReceive('getStatements')->once()->andReturn([$statement]);
+        app()->instance(MonobankClient::class, $mock);
+
+        /** @var MonobankImportService $service */
+        $service = app(MonobankImportService::class);
+
+        $run = $service->syncConnection($this->connection, 'manual');
+
+        $this->assertSame('success', $run->status);
+        $this->assertSame(0, $run->stats_json['imported']);
+        $this->assertSame(1, $run->stats_json['duplicates']);
+        $this->assertSame(
+            0,
+            TransactionJournalMeta::query()
+                ->where('name', 'external_id')
+                ->where('data', json_encode('monobank:mono-account-1:statement-existing-match'))
+                ->count()
+        );
     }
 
     #[Override]
