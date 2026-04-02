@@ -17,6 +17,7 @@ use function Safe\json_encode;
 class MonobankClient
 {
     private const string BASE_URI = 'https://api.monobank.ua/';
+    private const int MAX_RATE_LIMIT_RETRIES = 2;
 
     public function getClientInfo(string $token): array
     {
@@ -68,21 +69,40 @@ class MonobankClient
             'base_uri' => self::BASE_URI,
         ]);
 
-        try {
-            $response = $client->request($method, $path, $options);
-        } catch (ConnectException $e) {
-            Log::error(sprintf('Monobank API connection failure for "%s %s": %s', $method, $path, $e->getMessage()));
+        $attempt = 0;
+        while (true) {
+            try {
+                $response = $client->request($method, $path, $options);
+                break;
+            } catch (ConnectException $e) {
+                Log::error(sprintf('Monobank API connection failure for "%s %s": %s', $method, $path, $e->getMessage()));
 
-            throw new MonobankException('Could not connect to Monobank API.', previous: $e);
-        } catch (RequestException $e) {
-            $message = $this->formatRequestException($e);
-            Log::warning(sprintf('Monobank API request failure for "%s %s": %s', $method, $path, $message));
+                throw new MonobankException('Could not connect to Monobank API.', previous: $e);
+            } catch (RequestException $e) {
+                if ($this->shouldRetryRateLimit($e, $attempt)) {
+                    $delay = $this->retryDelaySeconds($e, $attempt);
+                    Log::notice(sprintf(
+                        'Monobank API rate limited "%s %s", retrying in %d second(s) (attempt %d/%d).',
+                        $method,
+                        $path,
+                        $delay,
+                        $attempt + 1,
+                        self::MAX_RATE_LIMIT_RETRIES
+                    ));
+                    sleep($delay);
+                    ++$attempt;
+                    continue;
+                }
 
-            throw new MonobankException($message, previous: $e);
-        } catch (GuzzleException $e) {
-            Log::error(sprintf('Unexpected Monobank API failure for "%s %s": %s', $method, $path, $e->getMessage()));
+                $message = $this->formatRequestException($e);
+                Log::warning(sprintf('Monobank API request failure for "%s %s": %s', $method, $path, $message));
 
-            throw new MonobankException('Unexpected Monobank API error.', previous: $e);
+                throw new MonobankException($message, previous: $e);
+            } catch (GuzzleException $e) {
+                Log::error(sprintf('Unexpected Monobank API failure for "%s %s": %s', $method, $path, $e->getMessage()));
+
+                throw new MonobankException('Unexpected Monobank API error.', previous: $e);
+            }
         }
 
         $body = (string) $response->getBody();
@@ -121,5 +141,27 @@ class MonobankClient
         }
 
         return sprintf('Monobank API returned HTTP %d: %s', $statusCode, $body);
+    }
+
+    private function retryDelaySeconds(RequestException $e, int $attempt): int
+    {
+        $response = $e->getResponse();
+        if (null !== $response && $response->hasHeader('Retry-After')) {
+            $value = trim($response->getHeaderLine('Retry-After'));
+            if (ctype_digit($value)) {
+                return max(1, min(10, (int) $value));
+            }
+        }
+
+        return min(10, 2 + $attempt);
+    }
+
+    private function shouldRetryRateLimit(RequestException $e, int $attempt): bool
+    {
+        $response = $e->getResponse();
+
+        return null !== $response
+            && 429 === $response->getStatusCode()
+            && $attempt < self::MAX_RATE_LIMIT_RETRIES;
     }
 }

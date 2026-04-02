@@ -10,6 +10,7 @@ use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
 use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Services\Monobank\MonobankClient;
+use FireflyIII\Services\Monobank\MonobankAccountMapper;
 use FireflyIII\Services\Monobank\MonobankImportService;
 use FireflyIII\User;
 use Mockery;
@@ -22,6 +23,31 @@ final class MonobankImportServiceTest extends TestCase
     private BankConnection $connection;
     private BankConnectionAccount $mapping;
     private User $user;
+
+    public function testAccountMapperStoresMultipleMaskedPans(): void
+    {
+        /** @var MonobankAccountMapper $mapper */
+        $mapper = app(MonobankAccountMapper::class);
+
+        $mapped = $mapper->syncConnectionAccounts($this->connection, [
+            'accounts' => [[
+                'id'           => 'mono-account-pan-list',
+                'currencyCode' => 980,
+                'maskedPan'    => [
+                    '535838******4648',
+                    '444111******0605',
+                    '444111******6656',
+                ],
+                'iban'         => 'UA083220010000026202310597459',
+            ]],
+        ]);
+
+        $this->assertCount(1, $mapped);
+        $this->assertSame(
+            '535838******4648, 444111******0605, 444111******6656',
+            $mapped->first()?->mono_masked_pan
+        );
+    }
 
     public function testImportsAndDeduplicatesStatements(): void
     {

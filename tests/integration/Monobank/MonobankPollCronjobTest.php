@@ -15,6 +15,8 @@ final class MonobankPollCronjobTest extends TestCase
 {
     public function testPollsActiveConnectionsAndHonorsCooldown(): void
     {
+        BankConnection::query()->update(['status' => 'disabled']);
+
         $user = $this->createAuthenticatedUser();
         $otherUser = $this->createAuthenticatedUser();
 

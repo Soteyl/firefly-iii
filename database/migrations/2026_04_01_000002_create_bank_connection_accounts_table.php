@@ -23,7 +23,7 @@ return new class extends Migration {
                 $table->string('mono_account_id', 255);
                 $table->string('mono_account_type', 50)->nullable();
                 $table->unsignedInteger('mono_currency_code')->nullable();
-                $table->string('mono_masked_pan', 32)->nullable();
+                $table->string('mono_masked_pan', 255)->nullable();
                 $table->string('mono_iban', 64)->nullable();
                 $table->unsignedInteger('firefly_account_id')->nullable();
                 $table->boolean('enabled')->default(true);
