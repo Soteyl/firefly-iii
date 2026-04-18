@@ -31,6 +31,7 @@ use FireflyIII\Support\Cronjobs\BillWarningCronjob;
 use FireflyIII\Support\Cronjobs\ExchangeRatesCronjob;
 use FireflyIII\Support\Cronjobs\MonobankPollCronjob;
 use FireflyIII\Support\Cronjobs\RecurringCronjob;
+use FireflyIII\Support\Cronjobs\RevolutPollCronjob;
 use FireflyIII\Support\Cronjobs\WebhookCronjob;
 
 /**
@@ -161,6 +162,27 @@ trait CronRunner
             'job_succeeded' => $monobank->jobSucceeded,
             'job_errored'   => $monobank->jobErrored,
             'message'       => $monobank->message,
+        ];
+    }
+
+    protected function revolutPollCronJob(bool $force, Carbon $date): array
+    {
+        /** @var RevolutPollCronjob $revolut */
+        $revolut = app(RevolutPollCronjob::class);
+        $revolut->setForce($force);
+        $revolut->setDate($date);
+
+        try {
+            $revolut->fire();
+        } catch (FireflyException $e) {
+            return ['job_fired' => false, 'job_succeeded' => false, 'job_errored' => true, 'message' => $e->getMessage()];
+        }
+
+        return [
+            'job_fired'     => $revolut->jobFired,
+            'job_succeeded' => $revolut->jobSucceeded,
+            'job_errored'   => $revolut->jobErrored,
+            'message'       => $revolut->message,
         ];
     }
 }

@@ -147,6 +147,70 @@ final class MonobankImportServiceTest extends TestCase
         );
     }
 
+    public function testFirstImportHonorsSyncFromDateAndSkipsOlderStatements(): void
+    {
+        $firstImportFrom = now()->subDays(2)->startOfDay()->timestamp;
+        $this->mapping->sync_from_ts = $firstImportFrom;
+        $this->mapping->last_synced_statement_ts = null;
+        $this->mapping->save();
+
+        $oldStatement = [
+            'id'   => 'statement-too-old',
+            'time' => now()->subDays(4)->timestamp,
+        ];
+
+        $mock = Mockery::mock(MonobankClient::class);
+        $mock->shouldReceive('getStatements')
+            ->once()
+            ->withArgs(function (string $token, string $accountId, int $fromTimestamp, int $toTimestamp): bool {
+                return 'token-1234567890' === $token
+                    && 'mono-account-1' === $accountId
+                    && $fromTimestamp === (int) $this->mapping->sync_from_ts
+                    && $toTimestamp >= $fromTimestamp;
+            })
+            ->andReturn([$oldStatement])
+        ;
+        app()->instance(MonobankClient::class, $mock);
+
+        /** @var MonobankImportService $service */
+        $service = app(MonobankImportService::class);
+
+        $run = $service->syncConnection($this->connection, 'manual');
+
+        $this->assertSame('success', $run->status);
+        $this->assertSame(0, $run->stats_json['imported']);
+        $this->assertSame(1, $run->stats_json['skipped']);
+    }
+
+    public function testOngoingSyncUsesLastSyncedTimestampBuffer(): void
+    {
+        $this->mapping->sync_from_ts = now()->subDays(10)->timestamp;
+        $this->mapping->last_synced_statement_ts = now()->subHours(5)->timestamp;
+        $this->mapping->save();
+
+        $mock = Mockery::mock(MonobankClient::class);
+        $mock->shouldReceive('getStatements')
+            ->once()
+            ->withArgs(function (string $token, string $accountId, int $fromTimestamp, int $toTimestamp): bool {
+                return 'token-1234567890' === $token
+                    && 'mono-account-1' === $accountId
+                    && $fromTimestamp === ((int) $this->mapping->last_synced_statement_ts) - 3600
+                    && $toTimestamp >= $fromTimestamp;
+            })
+            ->andReturn([])
+        ;
+        app()->instance(MonobankClient::class, $mock);
+
+        /** @var MonobankImportService $service */
+        $service = app(MonobankImportService::class);
+
+        $run = $service->syncConnection($this->connection, 'manual');
+
+        $this->assertSame('success', $run->status);
+        $this->assertSame(0, $run->stats_json['imported']);
+        $this->assertSame(0, $run->stats_json['skipped']);
+    }
+
     #[Override]
     protected function setUp(): void
     {

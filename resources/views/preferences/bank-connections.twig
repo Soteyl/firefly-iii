@@ -26,6 +26,95 @@
                     </div>
                 </form>
             </div>
+
+            <div class="box box-success">
+                <div class="box-header with-border">
+                    <h3 class="box-title">{{ 'connect_revolut'|_ }}</h3>
+                </div>
+                <div class="box-body">
+                    <p class="text-info">{{ 'connect_revolut_help'|_ }}</p>
+                    <p class="text-muted">{{ 'connect_revolut_enable_banking_help'|_ }}</p>
+
+                    <div class="panel panel-default">
+                        <div class="panel-heading"><strong>{{ 'revolut_enable_banking_step_upload'|_ }}</strong></div>
+                        <div class="panel-body">
+                            <form method="POST" action="{{ route('preferences.bank-connections.revolut.enable-banking.upload-key') }}" enctype="multipart/form-data">
+                                <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                <div class="form-group">
+                                    <label for="revolut_eb_private_key_file">{{ 'revolut_enable_banking_private_key_file'|_ }}</label>
+                                    <input type="file" class="form-control" id="revolut_eb_private_key_file" name="revolut_eb_private_key_file" accept=".pem">
+                                </div>
+                                <button type="submit" class="btn btn-default">{{ 'revolut_enable_banking_upload_key'|_ }}</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="panel panel-default">
+                        <div class="panel-heading"><strong>{{ 'revolut_enable_banking_uploaded_keys'|_ }}</strong></div>
+                        <div class="panel-body">
+                            {% if revolutEnableBankingApplications|length == 0 %}
+                                <p class="text-muted">{{ 'revolut_enable_banking_no_uploaded_keys'|_ }}</p>
+                            {% else %}
+                                <ul class="list-unstyled" style="margin-bottom:0;">
+                                    {% for app in revolutEnableBankingApplications %}
+                                        <li style="margin-bottom:6px;">
+                                            <strong>{{ app.name }}</strong>
+                                            <small class="text-muted">({{ app.application_id }}, {{ app.environment }}, {{ app.uploaded_at }})</small>
+                                            {% if app.status != 'ok' and app.error %}
+                                                <br><small class="text-danger">{{ app.error }}</small>
+                                            {% endif %}
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="panel panel-default">
+                        <div class="panel-heading"><strong>{{ 'revolut_enable_banking_step_1'|_ }}</strong></div>
+                        <div class="panel-body">
+                            <form method="POST" action="{{ route('preferences.bank-connections.revolut.enable-banking.start') }}">
+                                <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                <div class="form-group">
+                                    <label for="revolut_eb_application_id">{{ 'revolut_enable_banking_app_id'|_ }}</label>
+                                    <select class="form-control" id="revolut_eb_application_id" name="revolut_eb_application_id">
+                                        <option value="">{{ 'revolut_enable_banking_select_app'|_ }}</option>
+                                        {% for app in revolutEnableBankingApplications %}
+                                            {% if app.status == 'ok' %}
+                                                <option value="{{ app.application_id }}" {% if old('revolut_eb_application_id') == app.application_id %}selected{% endif %}>{{ app.label }}</option>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="revolut_eb_country">{{ 'revolut_enable_banking_country'|_ }}</label>
+                                    <input type="text" class="form-control" id="revolut_eb_country" name="revolut_eb_country"
+                                           value="{{ old('revolut_eb_country', 'IE') }}" autocomplete="off">
+                                </div>
+                                <button type="submit" class="btn btn-default" formtarget="_blank">{{ 'revolut_enable_banking_start_auth'|_ }}</button>
+                            </form>
+                            <p class="text-muted" style="margin-top:8px;margin-bottom:0;">{{ 'revolut_enable_banking_callback_info'|_ }}</p>
+                        </div>
+                    </div>
+
+                    <hr>
+                    <p class="text-muted">{{ 'connect_revolut_manual_help'|_ }}</p>
+                    <form method="POST" action="{{ route('preferences.bank-connections.revolut.store') }}">
+                        <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                        <div class="form-group">
+                            <label for="revolut_access_token">{{ 'revolut_token'|_ }}</label>
+                            <input type="password" class="form-control" id="revolut_access_token" name="revolut_access_token"
+                                   value="{{ old('revolut_access_token') }}" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label for="revolut_device_id">{{ 'revolut_device_id'|_ }}</label>
+                            <input type="text" class="form-control" id="revolut_device_id" name="revolut_device_id"
+                                   value="{{ old('revolut_device_id') }}" autocomplete="off">
+                        </div>
+                        <button type="submit" class="btn btn-success">{{ 'save_and_refresh_accounts'|_ }}</button>
+                    </form>
+                </div>
+            </div>
         </div>
         <div class="col-lg-7 col-md-7 col-sm-12 col-xs-12">
             <div class="box box-default">
@@ -57,9 +146,11 @@
                             </div>
                             <div class="panel-body">
                                 <p>
-                                    <strong>{{ 'webhook_enabled'|_ }}:</strong>
-                                    {{ connection.webhook_enabled ? 'yes'|_ : 'no'|_ }}
-                                    <br>
+                                    {% if connection.provider == 'monobank' %}
+                                        <strong>{{ 'webhook_enabled'|_ }}:</strong>
+                                        {{ connection.webhook_enabled ? 'yes'|_ : 'no'|_ }}
+                                        <br>
+                                    {% endif %}
                                     <strong>{{ 'last_successful_sync'|_ }}:</strong>
                                     {% if connection.last_successful_sync_at %}
                                         {{ connection.last_successful_sync_at.format('Y-m-d H:i:s') }}
@@ -75,24 +166,39 @@
                                 {% endif %}
 
                                 <div class="btn-group">
-                                    <form method="POST" action="{{ route('preferences.bank-connections.validate-token', connection.id) }}" style="display:inline;">
-                                        <input name="_token" type="hidden" value="{{ csrf_token() }}">
-                                        <button type="submit" class="btn btn-default">{{ 'validate_token'|_ }}</button>
-                                    </form>
-                                    <form method="POST" action="{{ route('preferences.bank-connections.refresh-accounts', connection.id) }}" style="display:inline;">
-                                        <input name="_token" type="hidden" value="{{ csrf_token() }}">
-                                        <button type="submit" class="btn btn-default">{{ 'refresh_accounts'|_ }}</button>
-                                    </form>
-                                    <form method="POST" action="{{ route('preferences.bank-connections.sync', connection.id) }}" style="display:inline;">
-                                        <input name="_token" type="hidden" value="{{ csrf_token() }}">
-                                        <button type="submit" class="btn btn-primary">{{ 'sync_now'|_ }}</button>
-                                    </form>
+                                    {% if connection.provider == 'revolut' %}
+                                        <form method="POST" action="{{ route('preferences.bank-connections.revolut.validate-token', connection.id) }}" style="display:inline;">
+                                            <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-default">{{ 'validate_token'|_ }}</button>
+                                        </form>
+                                        <form method="POST" action="{{ route('preferences.bank-connections.revolut.refresh-accounts', connection.id) }}" style="display:inline;">
+                                            <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-default">{{ 'refresh_accounts'|_ }}</button>
+                                        </form>
+                                        <form method="POST" action="{{ route('preferences.bank-connections.revolut.sync', connection.id) }}" style="display:inline;">
+                                            <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-primary">{{ 'sync_now'|_ }}</button>
+                                        </form>
+                                    {% else %}
+                                        <form method="POST" action="{{ route('preferences.bank-connections.validate-token', connection.id) }}" style="display:inline;">
+                                            <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-default">{{ 'validate_token'|_ }}</button>
+                                        </form>
+                                        <form method="POST" action="{{ route('preferences.bank-connections.refresh-accounts', connection.id) }}" style="display:inline;">
+                                            <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-default">{{ 'refresh_accounts'|_ }}</button>
+                                        </form>
+                                        <form method="POST" action="{{ route('preferences.bank-connections.sync', connection.id) }}" style="display:inline;">
+                                            <input name="_token" type="hidden" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-primary">{{ 'sync_now'|_ }}</button>
+                                        </form>
+                                    {% endif %}
                                 </div>
 
                                 <hr>
-                                <h4>{{ 'monobank_accounts'|_ }}</h4>
+                                <h4>{{ connection.provider == 'revolut' ? 'revolut_accounts'|_ : 'monobank_accounts'|_ }}</h4>
                                 {% if connection.bankConnectionAccounts|length == 0 %}
-                                    <p class="text-muted">{{ 'no_monobank_accounts'|_ }}</p>
+                                    <p class="text-muted">{{ connection.provider == 'revolut' ? 'no_revolut_accounts'|_ : 'no_monobank_accounts'|_ }}</p>
                                 {% else %}
                                     <div class="table-responsive">
                                         <table class="table table-striped">
@@ -101,6 +207,7 @@
                                                 <th>{{ 'account'|_ }}</th>
                                                 <th>{{ 'currency'|_ }}</th>
                                                 <th>{{ 'mapped_firefly_account'|_ }}</th>
+                                                <th>{{ 'first_import_from_date'|_ }}</th>
                                                 <th>{{ 'status'|_ }}</th>
                                                 <th>{{ 'actions'|_ }}</th>
                                             </tr>
@@ -109,15 +216,31 @@
                                             {% for account in connection.bankConnectionAccounts %}
                                                 <tr>
                                                     <td>
-                                                        <code>{{ account.mono_account_id }}</code>
-                                                        {% if account.mono_masked_pan %}
-                                                            <br><small>{{ account.mono_masked_pan }}</small>
-                                                        {% endif %}
-                                                        {% if account.mono_iban %}
-                                                            <br><small>{{ account.mono_iban }}</small>
+                                                        {% if connection.provider == 'revolut' %}
+                                                            <strong>{{ account.revolut_account_name ?: 'n/a' }}</strong>
+                                                            {% if account.revolut_account_id %}
+                                                                <br><code>{{ account.revolut_account_id }}</code>
+                                                            {% endif %}
+                                                            {% if account.revolut_wallet_id %}
+                                                                <br><small>{{ 'revolut_wallet_id_label'|_ }}: {{ account.revolut_wallet_id }}</small>
+                                                            {% endif %}
+                                                        {% else %}
+                                                            <code>{{ account.mono_account_id }}</code>
+                                                            {% if account.mono_masked_pan %}
+                                                                <br><small>{{ account.mono_masked_pan }}</small>
+                                                            {% endif %}
+                                                            {% if account.mono_iban %}
+                                                                <br><small>{{ account.mono_iban }}</small>
+                                                            {% endif %}
                                                         {% endif %}
                                                     </td>
-                                                    <td>{{ account.mono_currency_code ?: 'n/a' }}</td>
+                                                    <td>
+                                                        {% if connection.provider == 'revolut' %}
+                                                            {{ account.revolut_currency_code ?: 'n/a' }}
+                                                        {% else %}
+                                                            {{ account.mono_currency_code ?: 'n/a' }}
+                                                        {% endif %}
+                                                    </td>
                                                     <td>
                                                         <form method="POST" action="{{ route('preferences.bank-connections.accounts.update', [connection.id, account.id]) }}">
                                                             <input name="_token" type="hidden" value="{{ csrf_token() }}">
@@ -127,6 +250,19 @@
                                                                     <option value="{{ fireflyAccount.id }}" {% if account.firefly_account_id == fireflyAccount.id %}selected{% endif %}>{{ fireflyAccount.name }}</option>
                                                                 {% endfor %}
                                                             </select>
+                                                    </td>
+                                                    <td>
+                                                            {% set firstImportDate = account.sync_from_ts ? account.sync_from_ts|date('Y-m-d') : '' %}
+                                                            <input
+                                                                    type="date"
+                                                                    name="first_import_from_date"
+                                                                    class="form-control input-sm"
+                                                                    value="{{ firstImportDate }}"
+                                                                    {% if account.last_synced_statement_ts %}disabled{% endif %}
+                                                            >
+                                                            <small class="text-muted">
+                                                                {{ account.last_synced_statement_ts ? 'first_import_date_locked'|_ : 'first_import_date_help'|_ }}
+                                                            </small>
                                                     </td>
                                                     <td>
                                                             <label class="checkbox-inline" style="margin-top:0;">

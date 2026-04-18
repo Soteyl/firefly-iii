@@ -17,7 +17,7 @@ use function Safe\json_encode;
 class MonobankClient
 {
     private const string BASE_URI = 'https://api.monobank.ua/';
-    private const int MAX_RATE_LIMIT_RETRIES = 2;
+    private const int MAX_RATE_LIMIT_RETRIES = 6;
 
     public function getClientInfo(string $token): array
     {
@@ -149,11 +149,11 @@ class MonobankClient
         if (null !== $response && $response->hasHeader('Retry-After')) {
             $value = trim($response->getHeaderLine('Retry-After'));
             if (ctype_digit($value)) {
-                return max(1, min(10, (int) $value));
+                return max(1, min(60, (int) $value));
             }
         }
 
-        return min(10, 2 + $attempt);
+        return min(60, 3 * (2 ** $attempt));
     }
 
     private function shouldRetryRateLimit(RequestException $e, int $attempt): bool

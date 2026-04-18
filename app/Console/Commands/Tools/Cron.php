@@ -31,6 +31,7 @@ use FireflyIII\Support\Cronjobs\AutoBudgetCronjob;
 use FireflyIII\Support\Cronjobs\BillWarningCronjob;
 use FireflyIII\Support\Cronjobs\ExchangeRatesCronjob;
 use FireflyIII\Support\Cronjobs\MonobankPollCronjob;
+use FireflyIII\Support\Cronjobs\RevolutPollCronjob;
 use FireflyIII\Support\Cronjobs\RecurringCronjob;
 use FireflyIII\Support\Cronjobs\UpdateCheckCronjob;
 use FireflyIII\Support\Cronjobs\WebhookCronjob;
@@ -55,6 +56,7 @@ class Cron extends Command
         {--send-subscription-warnings : Send subscription warnings. Other tasks will be skipped unless also requested.}
         {--send-webhook-messages : Sends any stray webhook messages (with a maximum of 5).}
         {--sync-monobank : Poll Monobank connections for fallback statement imports.}
+        {--sync-revolut : Poll Revolut connections for fallback statement imports.}
         ';
 
     public function handle(): int
@@ -65,7 +67,8 @@ class Cron extends Command
         && !$this->option('send-subscription-warnings')
         && !$this->option('check-version')
         && !$this->option('send-webhook-messages')
-        && !$this->option('sync-monobank');
+        && !$this->option('sync-monobank')
+        && !$this->option('sync-revolut');
         $date  = null;
 
         try {
@@ -142,6 +145,15 @@ class Cron extends Command
         if ($doAll || $this->option('sync-monobank')) {
             try {
                 $this->monobankPollCronJob($force, $date);
+            } catch (FireflyException $e) {
+                Log::error($e->getMessage());
+                Log::error($e->getTraceAsString());
+                $this->friendlyError($e->getMessage());
+            }
+        }
+        if ($doAll || $this->option('sync-revolut')) {
+            try {
+                $this->revolutPollCronJob($force, $date);
             } catch (FireflyException $e) {
                 Log::error($e->getMessage());
                 Log::error($e->getTraceAsString());
@@ -306,6 +318,27 @@ class Cron extends Command
         }
         if ($monobank->jobSucceeded) {
             $this->friendlyPositive(sprintf('"Monobank polling" cron ran with success: %s', $monobank->message));
+        }
+    }
+
+    private function revolutPollCronJob(bool $force, ?Carbon $date): void
+    {
+        $revolut = new RevolutPollCronjob();
+        $revolut->setForce($force);
+        if ($date instanceof Carbon) {
+            $revolut->setDate($date);
+        }
+
+        $revolut->fire();
+
+        if ($revolut->jobErrored) {
+            $this->friendlyError(sprintf('Error in "Revolut polling" cron: %s', $revolut->message));
+        }
+        if ($revolut->jobFired) {
+            $this->friendlyInfo(sprintf('"Revolut polling" cron fired: %s', $revolut->message));
+        }
+        if ($revolut->jobSucceeded) {
+            $this->friendlyPositive(sprintf('"Revolut polling" cron ran with success: %s', $revolut->message));
         }
     }
 }

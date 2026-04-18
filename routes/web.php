@@ -836,9 +836,17 @@ Route::group(
         Route::post('test-notification', ['uses' => 'PreferencesController@testNotification', 'as' => 'test-notification']);
         Route::get('bank-connections', ['uses' => 'BankConnectionController@index', 'as' => 'bank-connections.index']);
         Route::post('bank-connections', ['uses' => 'BankConnectionController@store', 'as' => 'bank-connections.store']);
+        Route::post('bank-connections/revolut', ['uses' => 'BankConnectionController@storeRevolut', 'as' => 'bank-connections.revolut.store']);
+        Route::post('bank-connections/revolut/enable-banking/upload-key', ['uses' => 'BankConnectionController@uploadRevolutEnableBankingKey', 'as' => 'bank-connections.revolut.enable-banking.upload-key']);
+        Route::post('bank-connections/revolut/enable-banking/start', ['uses' => 'BankConnectionController@requestRevolutEnableBankingAuth', 'as' => 'bank-connections.revolut.enable-banking.start']);
+        Route::get('bank-connections/revolut/enable-banking/callback', ['uses' => 'BankConnectionController@revolutEnableBankingCallback', 'as' => 'bank-connections.revolut.enable-banking.callback']);
+        Route::post('bank-connections/revolut/enable-banking/complete', ['uses' => 'BankConnectionController@completeRevolutEnableBankingAuth', 'as' => 'bank-connections.revolut.enable-banking.complete']);
         Route::post('bank-connections/{id}/validate-token', ['uses' => 'BankConnectionController@validateToken', 'as' => 'bank-connections.validate-token']);
         Route::post('bank-connections/{id}/refresh-accounts', ['uses' => 'BankConnectionController@refreshAccounts', 'as' => 'bank-connections.refresh-accounts']);
         Route::post('bank-connections/{id}/sync', ['uses' => 'BankConnectionController@sync', 'as' => 'bank-connections.sync']);
+        Route::post('bank-connections/{id}/revolut/validate-token', ['uses' => 'BankConnectionController@validateRevolutToken', 'as' => 'bank-connections.revolut.validate-token']);
+        Route::post('bank-connections/{id}/revolut/refresh-accounts', ['uses' => 'BankConnectionController@refreshRevolutAccounts', 'as' => 'bank-connections.revolut.refresh-accounts']);
+        Route::post('bank-connections/{id}/revolut/sync', ['uses' => 'BankConnectionController@syncRevolut', 'as' => 'bank-connections.revolut.sync']);
         Route::post('bank-connections/{id}/accounts/{accountId}', ['uses' => 'BankConnectionController@updateMapping', 'as' => 'bank-connections.accounts.update']);
     }
 );

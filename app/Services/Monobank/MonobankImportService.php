@@ -24,6 +24,7 @@ class MonobankImportService
 {
     private const int INITIAL_LOOKBACK_SECONDS = 2_678_400;
     private const int SYNC_LOOKBACK_BUFFER_SECONDS = 3_600;
+    private const int ACCOUNT_REQUEST_DELAY_MS = 1200;
 
     public function __construct(
         private readonly MonobankClient $client,
@@ -64,6 +65,7 @@ class MonobankImportService
                 ->get()
             ;
 
+            $polledAccountCount = 0;
             foreach ($accounts as $mapping) {
                 ++$stats['accounts_considered'];
                 if (null === $mapping->firefly_account_id || false === $mapping->enabled) {
@@ -71,7 +73,11 @@ class MonobankImportService
                     continue;
                 }
 
+                if ($polledAccountCount > 0) {
+                    usleep(self::ACCOUNT_REQUEST_DELAY_MS * 1000);
+                }
                 ++$stats['accounts_polled'];
+                ++$polledAccountCount;
                 $this->syncMappedAccount($connection, $mapping, $stats);
             }
 
@@ -123,6 +129,10 @@ class MonobankImportService
         $lastSyncedTime    = $mapping->last_synced_statement_ts;
 
         foreach ($statements as $statement) {
+            if ($this->isBeforeFirstImportStart($mapping, (int) ($statement['time'] ?? 0))) {
+                ++$stats['skipped'];
+                continue;
+            }
             $externalId = $this->transactionMapper->externalId($mapping, $statement);
             if (null === $externalId) {
                 ++$stats['skipped'];
@@ -157,6 +167,21 @@ class MonobankImportService
         $mapping->last_seen_statement_id = $lastSeenId;
         $mapping->last_synced_statement_ts = $lastSyncedTime;
         $mapping->save();
+    }
+
+    private function isBeforeFirstImportStart(BankConnectionAccount $mapping, int $statementTimestamp): bool
+    {
+        if (null !== $mapping->last_synced_statement_ts) {
+            return false;
+        }
+        if (null === $mapping->sync_from_ts) {
+            return false;
+        }
+        if ($statementTimestamp <= 0) {
+            return false;
+        }
+
+        return $statementTimestamp < (int) $mapping->sync_from_ts;
     }
 
     private function fromTimestamp(BankConnectionAccount $mapping): int
