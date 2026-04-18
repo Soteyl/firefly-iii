@@ -104,6 +104,11 @@ class UserGroup extends Model
         return $this->hasMany(Bill::class);
     }
 
+    public function bankConnections(): HasMany
+    {
+        return $this->hasMany(BankConnection::class);
+    }
+
     /**
      * Link to budgets.
      */

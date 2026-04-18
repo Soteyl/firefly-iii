@@ -29,6 +29,7 @@ use FireflyIII\Exceptions\FireflyException;
 use FireflyIII\Support\Cronjobs\AutoBudgetCronjob;
 use FireflyIII\Support\Cronjobs\BillWarningCronjob;
 use FireflyIII\Support\Cronjobs\ExchangeRatesCronjob;
+use FireflyIII\Support\Cronjobs\MonobankPollCronjob;
 use FireflyIII\Support\Cronjobs\RecurringCronjob;
 use FireflyIII\Support\Cronjobs\WebhookCronjob;
 
@@ -139,6 +140,27 @@ trait CronRunner
             'job_succeeded' => $webhook->jobSucceeded,
             'job_errored'   => $webhook->jobErrored,
             'message'       => $webhook->message,
+        ];
+    }
+
+    protected function monobankPollCronJob(bool $force, Carbon $date): array
+    {
+        /** @var MonobankPollCronjob $monobank */
+        $monobank = app(MonobankPollCronjob::class);
+        $monobank->setForce($force);
+        $monobank->setDate($date);
+
+        try {
+            $monobank->fire();
+        } catch (FireflyException $e) {
+            return ['job_fired' => false, 'job_succeeded' => false, 'job_errored' => true, 'message' => $e->getMessage()];
+        }
+
+        return [
+            'job_fired'     => $monobank->jobFired,
+            'job_succeeded' => $monobank->jobSucceeded,
+            'job_errored'   => $monobank->jobErrored,
+            'message'       => $monobank->message,
         ];
     }
 }

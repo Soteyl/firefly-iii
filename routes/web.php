@@ -87,6 +87,10 @@ Route::group(
     }
 );
 
+Route::match(['GET', 'POST'], 'monobank/webhook/{secret}', [\FireflyIII\Http\Controllers\MonobankWebhookController::class, 'handle'])
+    ->name('monobank.webhook')
+    ->withoutMiddleware([\FireflyIII\Http\Middleware\VerifyCsrfToken::class]);
+
 // These routes only work when the user is NOT logged in.
 Route::group(
     ['middleware' => ['user-not-logged-in'], 'namespace' => 'FireflyIII\Http\Controllers'],
@@ -830,6 +834,12 @@ Route::group(
         Route::get('', ['uses' => 'PreferencesController@index', 'as' => 'index']);
         Route::post('', ['uses' => 'PreferencesController@postIndex', 'as' => 'update']);
         Route::post('test-notification', ['uses' => 'PreferencesController@testNotification', 'as' => 'test-notification']);
+        Route::get('bank-connections', ['uses' => 'BankConnectionController@index', 'as' => 'bank-connections.index']);
+        Route::post('bank-connections', ['uses' => 'BankConnectionController@store', 'as' => 'bank-connections.store']);
+        Route::post('bank-connections/{id}/validate-token', ['uses' => 'BankConnectionController@validateToken', 'as' => 'bank-connections.validate-token']);
+        Route::post('bank-connections/{id}/refresh-accounts', ['uses' => 'BankConnectionController@refreshAccounts', 'as' => 'bank-connections.refresh-accounts']);
+        Route::post('bank-connections/{id}/sync', ['uses' => 'BankConnectionController@sync', 'as' => 'bank-connections.sync']);
+        Route::post('bank-connections/{id}/accounts/{accountId}', ['uses' => 'BankConnectionController@updateMapping', 'as' => 'bank-connections.accounts.update']);
     }
 );
 

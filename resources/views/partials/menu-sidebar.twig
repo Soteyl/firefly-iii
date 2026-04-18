@@ -220,6 +220,13 @@
                     <span>{{ 'preferences'|_ }}</span>
                 </a>
             </li>
+            <li class="{{ activeRoutePartial('preferences.bank-connections') }}">
+                <a class="{{ activeRoutePartial('preferences.bank-connections') }}"
+                   href="{{ route('preferences.bank-connections.index') }}">
+                    <span class="fa fa-angle-right fa-fw"></span>
+                    <span>{{ 'bank_connections'|_ }}</span>
+                </a>
+            </li>
             <li class="{{ activeRoutePartial('currencies') }}">
                 <a class="{{ activeRoutePartial('currencies') }}" href="{{ route('currencies.index') }}">
                     <span class="fa fa-angle-right fa-fw"></span>

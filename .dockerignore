@@ -1,0 +1,14 @@
+.git
+.github
+.ci
+.idea
+.vscode
+node_modules
+vendor
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/testing/*
+storage/framework/views/*
+storage/logs/*
+bootstrap/cache/*.php
+docker-compose*.yml

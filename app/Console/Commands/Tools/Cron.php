@@ -30,6 +30,7 @@ use FireflyIII\Exceptions\FireflyException;
 use FireflyIII\Support\Cronjobs\AutoBudgetCronjob;
 use FireflyIII\Support\Cronjobs\BillWarningCronjob;
 use FireflyIII\Support\Cronjobs\ExchangeRatesCronjob;
+use FireflyIII\Support\Cronjobs\MonobankPollCronjob;
 use FireflyIII\Support\Cronjobs\RecurringCronjob;
 use FireflyIII\Support\Cronjobs\UpdateCheckCronjob;
 use FireflyIII\Support\Cronjobs\WebhookCronjob;
@@ -53,6 +54,7 @@ class Cron extends Command
         {--create-auto-budgets : Create auto budgets. Other tasks will be skipped unless also requested.}
         {--send-subscription-warnings : Send subscription warnings. Other tasks will be skipped unless also requested.}
         {--send-webhook-messages : Sends any stray webhook messages (with a maximum of 5).}
+        {--sync-monobank : Poll Monobank connections for fallback statement imports.}
         ';
 
     public function handle(): int
@@ -62,7 +64,8 @@ class Cron extends Command
         && !$this->option('create-auto-budgets')
         && !$this->option('send-subscription-warnings')
         && !$this->option('check-version')
-        && !$this->option('send-webhook-messages');
+        && !$this->option('send-webhook-messages')
+        && !$this->option('sync-monobank');
         $date  = null;
 
         try {
@@ -130,6 +133,15 @@ class Cron extends Command
         if ($doAll || $this->option('send-webhook-messages')) {
             try {
                 $this->webhookCronJob($force, $date);
+            } catch (FireflyException $e) {
+                Log::error($e->getMessage());
+                Log::error($e->getTraceAsString());
+                $this->friendlyError($e->getMessage());
+            }
+        }
+        if ($doAll || $this->option('sync-monobank')) {
+            try {
+                $this->monobankPollCronJob($force, $date);
             } catch (FireflyException $e) {
                 Log::error($e->getMessage());
                 Log::error($e->getTraceAsString());
@@ -273,6 +285,27 @@ class Cron extends Command
         }
         if ($webhook->jobSucceeded) {
             $this->friendlyPositive(sprintf('"Webhook" cron ran with success: %s', $webhook->message));
+        }
+    }
+
+    private function monobankPollCronJob(bool $force, ?Carbon $date): void
+    {
+        $monobank = new MonobankPollCronjob();
+        $monobank->setForce($force);
+        if ($date instanceof Carbon) {
+            $monobank->setDate($date);
+        }
+
+        $monobank->fire();
+
+        if ($monobank->jobErrored) {
+            $this->friendlyError(sprintf('Error in "Monobank polling" cron: %s', $monobank->message));
+        }
+        if ($monobank->jobFired) {
+            $this->friendlyInfo(sprintf('"Monobank polling" cron fired: %s', $monobank->message));
+        }
+        if ($monobank->jobSucceeded) {
+            $this->friendlyPositive(sprintf('"Monobank polling" cron ran with success: %s', $monobank->message));
         }
     }
 }
