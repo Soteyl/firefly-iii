@@ -170,6 +170,9 @@ class Preferences
     public function getEncryptedForUser(User $user, string $name, array|bool|int|string|null $default = null): ?Preference
     {
         $result = $this->getForUser($user, $name, $default);
+        if (!$result instanceof Preference) {
+            return null;
+        }
         if ('' === $result->data) {
             // Log::warning(sprintf('Empty encrypted preference found: "%s"', $name));
 
