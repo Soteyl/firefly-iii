@@ -147,7 +147,12 @@ return [
     'telegram_assistant' => [
         'shared_secret' => env('TELEGRAM_ASSISTANT_SHARED_SECRET', ''),
         'firefly_base_url' => env('TELEGRAM_ASSISTANT_FIREFLY_BASE_URL', 'http://app:8080'),
-        'oauth_authorize_url' => env('TELEGRAM_ASSISTANT_OPENAI_OAUTH_AUTHORIZE_URL', ''),
+        'oauth_authorize_url' => env('TELEGRAM_ASSISTANT_OPENAI_OAUTH_AUTHORIZE_URL', 'https://auth.openai.com/oauth/authorize'),
+        'oauth_token_url' => env('TELEGRAM_ASSISTANT_OPENAI_OAUTH_TOKEN_URL', 'https://auth.openai.com/oauth/token'),
+        'oauth_client_id' => env('TELEGRAM_ASSISTANT_OPENAI_OAUTH_CLIENT_ID', 'app_EMoamEEZ73f0CkXaXp7hrann'),
+        'oauth_redirect_uri' => env('TELEGRAM_ASSISTANT_OPENAI_OAUTH_REDIRECT_URI', 'http://localhost:1455/auth/callback'),
+        'oauth_scope' => env('TELEGRAM_ASSISTANT_OPENAI_OAUTH_SCOPE', 'openid profile email offline_access'),
+        'oauth_originator' => env('TELEGRAM_ASSISTANT_OPENAI_OAUTH_ORIGINATOR', 'firefly'),
         'default_model' => env('TELEGRAM_ASSISTANT_DEFAULT_MODEL', 'gpt-5-mini'),
         'models' => [
             'gpt-5' => 'GPT-5',

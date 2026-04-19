@@ -26,6 +26,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
@@ -40,6 +41,7 @@ final class BankConnectionController extends Controller
     private const TELEGRAM_OPENAI_TOKEN_PREFERENCE = 'telegram_assistant_openai_api_token';
     private const TELEGRAM_MODEL_PREFERENCE = 'telegram_assistant_model';
     private const TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE = 'telegram_assistant_openai_oauth_state';
+    private const TELEGRAM_OPENAI_OAUTH_PKCE_VERIFIER_PREFERENCE = 'telegram_assistant_openai_oauth_pkce_verifier';
     private const DRAFT_MCC_LOOKBACK_DAYS = 180;
     private const DRAFT_MCC_META_LIMIT = 1500;
 
@@ -89,7 +91,7 @@ final class BankConnectionController extends Controller
         return view('profile.telegram-assistant', [
             'telegramAssistant' => $this->getTelegramAssistantSettings($user),
             'openAiModelOptions' => $this->openAiModelOptions(),
-            'telegramAssistantOauthCallbackUrl' => route('profile.telegram-assistant.openai.oauth.callback'),
+            'telegramAssistantOauthCallbackUrl' => trim((string) config('banking.telegram_assistant.oauth_redirect_uri', 'http://localhost:1455/auth/callback')),
         ]);
     }
 
@@ -651,11 +653,30 @@ final class BankConnectionController extends Controller
             }
             $oauthApiKey = trim((string) ($queryParams['api_key'] ?? $queryParams['access_token'] ?? ''));
             if ('' === $oauthApiKey) {
-                return redirect()
-                    ->route('profile.telegram-assistant.index')
-                    ->withErrors(['openai_oauth_result_url' => (string) trans('firefly.telegram_assistant_oauth_missing_api_key')])
-                    ->withInput()
-                ;
+                $authorizationCode = trim((string) ($queryParams['code'] ?? ''));
+                if ('' === $authorizationCode) {
+                    return redirect()
+                        ->route('profile.telegram-assistant.index')
+                        ->withErrors(['openai_oauth_result_url' => (string) trans('firefly.telegram_assistant_oauth_missing_api_key')])
+                        ->withInput()
+                    ;
+                }
+                $pkceVerifier = trim((string) (Preferences::getForUser($user, self::TELEGRAM_OPENAI_OAUTH_PKCE_VERIFIER_PREFERENCE, null)?->data ?? ''));
+                if ('' === $pkceVerifier) {
+                    return redirect()
+                        ->route('profile.telegram-assistant.index')
+                        ->withErrors(['openai_oauth_result_url' => (string) trans('firefly.telegram_assistant_oauth_state_mismatch')])
+                        ->withInput()
+                    ;
+                }
+                $oauthApiKey = $this->exchangeOpenAiOAuthCode($authorizationCode, $pkceVerifier);
+                if ('' === $oauthApiKey) {
+                    return redirect()
+                        ->route('profile.telegram-assistant.index')
+                        ->withErrors(['openai_oauth_result_url' => (string) trans('firefly.telegram_assistant_oauth_missing_api_key')])
+                        ->withInput()
+                    ;
+                }
             }
         }
 
@@ -679,6 +700,7 @@ final class BankConnectionController extends Controller
         if ('' !== $oauthApiKey) {
             Preferences::setEncrypted(self::TELEGRAM_OPENAI_TOKEN_PREFERENCE, $oauthApiKey);
             Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE, null);
+            Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_PKCE_VERIFIER_PREFERENCE, null);
         }
 
         return redirect()
@@ -703,16 +725,26 @@ final class BankConnectionController extends Controller
             ;
         }
 
+        $pkceVerifier = rtrim(strtr(base64_encode(random_bytes(64)), '+/', '-_'), '=');
+        $pkceChallenge = rtrim(strtr(base64_encode(hash('sha256', $pkceVerifier, true)), '+/', '-_'), '=');
         $state = (string) Str::uuid();
         Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE, $state);
+        Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_PKCE_VERIFIER_PREFERENCE, $pkceVerifier);
+
         $separator = str_contains($authUrl, '?') ? '&' : '?';
-        $redirectUri = route('profile.telegram-assistant.openai.oauth.callback');
+        $redirectUri = trim((string) config('banking.telegram_assistant.oauth_redirect_uri', 'http://localhost:1455/auth/callback'));
+        $scope = trim((string) config('banking.telegram_assistant.oauth_scope', 'openid profile email offline_access'));
+        $originator = trim((string) config('banking.telegram_assistant.oauth_originator', 'firefly'));
         $target = sprintf(
-            '%s%sstate=%s&redirect_uri=%s',
+            '%s%sresponse_type=code&client_id=%s&redirect_uri=%s&scope=%s&code_challenge=%s&code_challenge_method=S256&state=%s&id_token_add_organizations=true&codex_cli_simplified_flow=true&originator=%s',
             $authUrl,
             $separator,
+            urlencode(trim((string) config('banking.telegram_assistant.oauth_client_id', 'app_EMoamEEZ73f0CkXaXp7hrann'))),
+            urlencode($redirectUri),
+            urlencode($scope),
+            urlencode($pkceChallenge),
             urlencode($state),
-            urlencode($redirectUri)
+            urlencode($originator)
         );
 
         return redirect()->away($target);
@@ -1210,6 +1242,44 @@ final class BankConnectionController extends Controller
             'openai_api_token_masked' => $maskedToken,
             'openai_model' => $model,
         ];
+    }
+
+    private function exchangeOpenAiOAuthCode(string $authorizationCode, string $pkceVerifier): string
+    {
+        $tokenUrl = trim((string) config('banking.telegram_assistant.oauth_token_url', 'https://auth.openai.com/oauth/token'));
+        $clientId = trim((string) config('banking.telegram_assistant.oauth_client_id', 'app_EMoamEEZ73f0CkXaXp7hrann'));
+        $redirectUri = trim((string) config('banking.telegram_assistant.oauth_redirect_uri', 'http://localhost:1455/auth/callback'));
+        if ('' === $tokenUrl || '' === $clientId || '' === $redirectUri || '' === $authorizationCode || '' === $pkceVerifier) {
+            return '';
+        }
+
+        try {
+            $response = Http::asForm()
+                ->timeout(15)
+                ->post($tokenUrl, [
+                    'grant_type' => 'authorization_code',
+                    'client_id' => $clientId,
+                    'code' => $authorizationCode,
+                    'code_verifier' => $pkceVerifier,
+                    'redirect_uri' => $redirectUri,
+                ])
+            ;
+        } catch (\Throwable $e) {
+            Log::warning(sprintf('OpenAI OAuth code exchange failed: %s', $e->getMessage()));
+
+            return '';
+        }
+        if (!$response->successful()) {
+            Log::warning(sprintf('OpenAI OAuth code exchange failed with status %d', $response->status()));
+
+            return '';
+        }
+        $data = $response->json();
+        if (!is_array($data)) {
+            return '';
+        }
+
+        return trim((string) ($data['access_token'] ?? ''));
     }
 
 }
