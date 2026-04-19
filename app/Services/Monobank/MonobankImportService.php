@@ -205,6 +205,7 @@ class MonobankImportService
 
             /** @var TransactionGroup $group */
             $group = $this->transactionGroupRepository->store($mapped);
+            $this->storeMcc($group, $statement);
             if (null !== $counterExternalId) {
                 $this->storePairExternalId($group, $counterExternalId);
                 $consumedExternalIds[$counterExternalId] = true;
@@ -369,6 +370,36 @@ class MonobankImportService
         $meta->transaction_journal_id = $journal->id;
         $meta->name = 'monobank_pair_external_id';
         $meta->data = $externalId;
+        $meta->save();
+    }
+
+    private function storeMcc(TransactionGroup $group, array $statement): void
+    {
+        $mcc = preg_replace('/\D+/', '', trim((string) ($statement['mcc'] ?? $statement['originalMcc'] ?? '')));
+        if ('' === $mcc) {
+            return;
+        }
+
+        /** @var null|TransactionJournal $journal */
+        $journal = $group->transactionJournals()->first();
+        if (!$journal instanceof TransactionJournal) {
+            return;
+        }
+
+        $exists = TransactionJournalMeta::query()
+            ->where('transaction_journal_id', $journal->id)
+            ->where('name', 'bank_mcc')
+            ->where('hash', hash('sha256', json_encode($mcc)))
+            ->exists()
+        ;
+        if ($exists) {
+            return;
+        }
+
+        $meta = new TransactionJournalMeta();
+        $meta->transaction_journal_id = $journal->id;
+        $meta->name = 'bank_mcc';
+        $meta->data = $mcc;
         $meta->save();
     }
 

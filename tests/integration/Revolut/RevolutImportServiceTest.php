@@ -178,6 +178,14 @@ final class RevolutImportServiceTest extends TestCase
             ->firstOrFail()
         ;
         $this->assertSame('Groceries', $mccMeta->transactionJournal->categories()->firstOrFail()->name);
+        $this->assertSame(
+            1,
+            TransactionJournalMeta::query()
+                ->where('transaction_journal_id', $mccMeta->transaction_journal_id)
+                ->where('name', 'bank_mcc')
+                ->where('data', json_encode('5411'))
+                ->count()
+        );
 
         /** @var TransactionJournalMeta $overrideMeta */
         $overrideMeta = TransactionJournalMeta::query()

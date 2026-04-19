@@ -11,6 +11,9 @@ use FireflyIII\Exceptions\MonobankException;
 use FireflyIII\Exceptions\RevolutException;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
+use FireflyIII\Models\Note;
+use FireflyIII\Models\TransactionJournal;
+use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Repositories\Account\AccountRepositoryInterface;
 use FireflyIII\Services\Monobank\BankSyncService;
 use FireflyIII\Services\Revolut\EnableBankingClient;
@@ -31,6 +34,8 @@ use function trans_choice;
 final class BankConnectionController extends Controller
 {
     private const CATEGORY_RULES_PREFERENCE = 'bank_connection_category_rules';
+    private const DRAFT_MCC_LOOKBACK_DAYS = 180;
+    private const DRAFT_MCC_META_LIMIT = 1500;
 
     public function __construct()
     {
@@ -56,6 +61,7 @@ final class BankConnectionController extends Controller
         ]);
         $categories = $user->categories()->orderBy('name')->get(['id', 'name']);
         $categoryRules = $this->getCategoryRulesPreference($user);
+        $categoryRules = $this->appendRecentMccDrafts($user, $categoryRules);
 
         return view('preferences.bank-connections', [
             'connections'   => $connections,
@@ -824,6 +830,109 @@ final class BankConnectionController extends Controller
         }
 
         return ['mcc' => $cleanMcc, 'overrides' => $cleanOverrides];
+    }
+
+    /**
+     * @param array{mcc: array<int, array{mcc: string, category_id: int, enabled: bool}>, overrides: array<int, array{external_id: string, description_contains: string, mcc: string, category_id: int, enabled: bool}>} $rules
+     *
+     * @return array{mcc: array<int, array{mcc: string, category_id: int|null, enabled: bool}>, overrides: array<int, array{external_id: string, description_contains: string, mcc: string, category_id: int, enabled: bool}>}
+     */
+    private function appendRecentMccDrafts(User $user, array $rules): array
+    {
+        $existingMcc = [];
+        foreach ($rules['mcc'] as $rule) {
+            $mcc = preg_replace('/\D+/', '', (string) ($rule['mcc'] ?? ''));
+            if ('' === $mcc) {
+                continue;
+            }
+            $existingMcc[$mcc] = true;
+        }
+
+        foreach ($this->recentImportedMccs($user) as $mcc) {
+            if (isset($existingMcc[$mcc])) {
+                continue;
+            }
+            $rules['mcc'][] = [
+                'mcc'         => $mcc,
+                'category_id' => null,
+                'enabled'     => true,
+            ];
+            $existingMcc[$mcc] = true;
+        }
+
+        usort($rules['mcc'], static function (array $left, array $right): int {
+            return strcmp((string) ($left['mcc'] ?? ''), (string) ($right['mcc'] ?? ''));
+        });
+
+        return $rules;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function recentImportedMccs(User $user): array
+    {
+        $fromDate = now()->subDays(self::DRAFT_MCC_LOOKBACK_DAYS)->format('Y-m-d H:i:s');
+        $results = [];
+        $seen = [];
+
+        $mccMeta = TransactionJournalMeta::query()
+            ->where('name', 'bank_mcc')
+            ->whereHas('transactionJournal', static function ($query) use ($user, $fromDate): void {
+                $query->where('user_id', $user->id)->where('date', '>=', $fromDate);
+            })
+            ->orderByDesc('id')
+            ->limit(self::DRAFT_MCC_META_LIMIT)
+            ->pluck('data')
+        ;
+
+        foreach ($mccMeta as $encoded) {
+            $value = preg_replace('/\D+/', '', trim((string) json_decode((string) $encoded, true)));
+            if ('' === $value || isset($seen[$value])) {
+                continue;
+            }
+            $seen[$value] = true;
+            $results[] = $value;
+        }
+
+        $monobankMeta = TransactionJournalMeta::query()
+            ->where('name', 'external_id')
+            ->whereHas('transactionJournal', static function ($query) use ($user, $fromDate): void {
+                $query->where('user_id', $user->id)->where('date', '>=', $fromDate);
+            })
+            ->where('data', 'like', '"monobank:%')
+            ->orderByDesc('id')
+            ->limit(self::DRAFT_MCC_META_LIMIT)
+            ->pluck('transaction_journal_id')
+        ;
+
+        $journalIds = $monobankMeta->map(static fn ($id): int => (int) $id)->all();
+        if ([] === $journalIds) {
+            return $results;
+        }
+
+        $notes = Note::query()
+            ->where('noteable_type', TransactionJournal::class)
+            ->whereIn('noteable_id', $journalIds)
+            ->pluck('text')
+        ;
+
+        foreach ($notes as $text) {
+            if (!is_string($text)) {
+                continue;
+            }
+            if (!preg_match('/\bMCC:\s*([0-9]{3,8})\b/u', $text, $matches)) {
+                continue;
+            }
+            $mcc = preg_replace('/\D+/', '', (string) ($matches[1] ?? ''));
+            if ('' === $mcc || isset($seen[$mcc])) {
+                continue;
+            }
+            $seen[$mcc] = true;
+            $results[] = $mcc;
+        }
+
+        return $results;
     }
 
     /**

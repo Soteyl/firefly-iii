@@ -188,7 +188,8 @@ class RevolutImportService
                 continue;
             }
 
-            $this->transactionGroupRepository->store($mapped);
+            $group = $this->transactionGroupRepository->store($mapped);
+            $this->storeMcc($group, $transaction);
             ++$stats['imported'];
 
             $lastSeenId = (string) ($transaction['legId'] ?? $transaction['id'] ?? $lastSeenId);
@@ -274,7 +275,8 @@ class RevolutImportService
                 continue;
             }
 
-            $this->transactionGroupRepository->store($mapped);
+            $group = $this->transactionGroupRepository->store($mapped);
+            $this->storeMcc($group, $transaction);
             ++$stats['imported'];
 
             $lastSeenId = $externalId;
@@ -427,5 +429,57 @@ class RevolutImportService
             'Withdrawal' => sprintf('-%s', ltrim($amount, '-')),
             default      => ltrim($amount, '+'),
         };
+    }
+
+    private function storeMcc(\FireflyIII\Models\TransactionGroup $group, array $transaction): void
+    {
+        $mcc = $this->extractMcc($transaction);
+        if (null === $mcc) {
+            return;
+        }
+
+        /** @var null|TransactionJournal $journal */
+        $journal = $group->transactionJournals()->first();
+        if (!$journal instanceof TransactionJournal) {
+            return;
+        }
+
+        $exists = TransactionJournalMeta::query()
+            ->where('transaction_journal_id', $journal->id)
+            ->where('name', 'bank_mcc')
+            ->where('hash', hash('sha256', json_encode($mcc)))
+            ->exists()
+        ;
+        if ($exists) {
+            return;
+        }
+
+        $meta = new TransactionJournalMeta();
+        $meta->transaction_journal_id = $journal->id;
+        $meta->name = 'bank_mcc';
+        $meta->data = $mcc;
+        $meta->save();
+    }
+
+    private function extractMcc(array $transaction): ?string
+    {
+        $candidates = [
+            $transaction['mcc'] ?? null,
+            $transaction['originalMcc'] ?? null,
+            $transaction['merchant']['categoryCode'] ?? null,
+            $transaction['merchant']['mcc'] ?? null,
+            $transaction['merchant_category_code'] ?? null,
+        ];
+        foreach ($candidates as $candidate) {
+            if (null === $candidate) {
+                continue;
+            }
+            $mcc = preg_replace('/\D+/', '', trim((string) $candidate));
+            if ('' !== $mcc) {
+                return $mcc;
+            }
+        }
+
+        return null;
     }
 }
