@@ -15,6 +15,7 @@ use FireflyIII\Repositories\Account\AccountRepositoryInterface;
 use FireflyIII\Services\Monobank\BankSyncService;
 use FireflyIII\Services\Revolut\EnableBankingClient;
 use FireflyIII\Services\Revolut\RevolutSyncService;
+use FireflyIII\Support\Facades\Preferences;
 use FireflyIII\User;
 use Illuminate\Contracts\View\Factory;
 use Illuminate\Http\UploadedFile;
@@ -29,6 +30,8 @@ use function trans_choice;
 
 final class BankConnectionController extends Controller
 {
+    private const CATEGORY_RULES_PREFERENCE = 'bank_connection_category_rules';
+
     public function __construct()
     {
         parent::__construct();
@@ -52,11 +55,14 @@ final class BankConnectionController extends Controller
             AccountTypeEnum::DEFAULT->value,
         ]);
         $categories = $user->categories()->orderBy('name')->get(['id', 'name']);
+        $categoryRules = $this->getCategoryRulesPreference($user);
 
         return view('preferences.bank-connections', [
             'connections'   => $connections,
             'assetAccounts' => $assetAccounts,
             'categories'    => $categories,
+            'categoryRules' => $categoryRules,
+            'mccOptions'    => $this->merchantCategoryOptions(),
             'revolutEnableBankingApplications' => $this->uploadedEnableBankingApplications(),
         ]);
     }
@@ -507,10 +513,8 @@ final class BankConnectionController extends Controller
         return redirect()->route('preferences.bank-connections.index')->with('success', (string) trans('firefly.bank_account_mapping_saved'));
     }
 
-    public function updateCategoryRules(Request $request, int $id): RedirectResponse
+    public function updateCategoryRules(Request $request): RedirectResponse
     {
-        $connection = $this->findConnection($id);
-
         $validated = $request->validate([
             'mcc_rules'                        => 'nullable|array',
             'mcc_rules.*.mcc'                  => 'nullable|string|max:8',
@@ -572,13 +576,10 @@ final class BankConnectionController extends Controller
             ];
         }
 
-        $providerConfig = is_array($connection->provider_config) ? $connection->provider_config : [];
-        $providerConfig['category_rules'] = [
+        Preferences::setForUser($user, self::CATEGORY_RULES_PREFERENCE, [
             'mcc'       => $mccRules,
             'overrides' => $overrideRules,
-        ];
-        $connection->provider_config = $providerConfig;
-        $connection->save();
+        ]);
 
         return redirect()
             ->route('preferences.bank-connections.index')
@@ -766,5 +767,85 @@ final class BankConnectionController extends Controller
             'application_id' => $applicationId,
             'country' => $country,
         ];
+    }
+
+    /**
+     * @return array{mcc: array<int, array{mcc: string, category_id: int, enabled: bool}>, overrides: array<int, array{external_id: string, description_contains: string, mcc: string, category_id: int, enabled: bool}>}
+     */
+    private function getCategoryRulesPreference(User $user): array
+    {
+        $rules = [];
+        $preference = Preferences::getForUser($user, self::CATEGORY_RULES_PREFERENCE, null);
+        if (is_array($preference?->data)) {
+            $rules = $preference->data;
+        }
+        $mccRules = is_array($rules['mcc'] ?? null) ? $rules['mcc'] : [];
+        $overrideRules = is_array($rules['overrides'] ?? null) ? $rules['overrides'] : [];
+
+        $cleanMcc = [];
+        foreach ($mccRules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            $mcc = preg_replace('/\D+/', '', trim((string) ($rule['mcc'] ?? '')));
+            $categoryId = (int) ($rule['category_id'] ?? 0);
+            if ('' === $mcc || $categoryId <= 0) {
+                continue;
+            }
+            $cleanMcc[] = [
+                'mcc'         => $mcc,
+                'category_id' => $categoryId,
+                'enabled'     => (bool) ($rule['enabled'] ?? true),
+            ];
+        }
+
+        $cleanOverrides = [];
+        foreach ($overrideRules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            $externalId = trim((string) ($rule['external_id'] ?? ''));
+            $descriptionContains = trim((string) ($rule['description_contains'] ?? ''));
+            $mcc = preg_replace('/\D+/', '', trim((string) ($rule['mcc'] ?? '')));
+            $categoryId = (int) ($rule['category_id'] ?? 0);
+            if ($categoryId <= 0) {
+                continue;
+            }
+            if ('' === $externalId && '' === $descriptionContains && '' === $mcc) {
+                continue;
+            }
+            $cleanOverrides[] = [
+                'external_id'          => $externalId,
+                'description_contains' => $descriptionContains,
+                'mcc'                  => $mcc,
+                'category_id'          => $categoryId,
+                'enabled'              => (bool) ($rule['enabled'] ?? true),
+            ];
+        }
+
+        return ['mcc' => $cleanMcc, 'overrides' => $cleanOverrides];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function merchantCategoryOptions(): array
+    {
+        $options = config('banking.mcc', []);
+        if (!is_array($options)) {
+            return [];
+        }
+        $clean = [];
+        foreach ($options as $code => $title) {
+            $mcc = preg_replace('/\D+/', '', (string) $code);
+            $name = trim((string) $title);
+            if ('' === $mcc || '' === $name) {
+                continue;
+            }
+            $clean[$mcc] = $name;
+        }
+        ksort($clean, SORT_NATURAL);
+
+        return $clean;
     }
 }

@@ -97,22 +97,6 @@
                         </div>
                     </div>
 
-                    <hr>
-                    <p class="text-muted">{{ 'connect_revolut_manual_help'|_ }}</p>
-                    <form method="POST" action="{{ route('preferences.bank-connections.revolut.store') }}">
-                        <input name="_token" type="hidden" value="{{ csrf_token() }}">
-                        <div class="form-group">
-                            <label for="revolut_access_token">{{ 'revolut_token'|_ }}</label>
-                            <input type="password" class="form-control" id="revolut_access_token" name="revolut_access_token"
-                                   value="{{ old('revolut_access_token') }}" autocomplete="off">
-                        </div>
-                        <div class="form-group">
-                            <label for="revolut_device_id">{{ 'revolut_device_id'|_ }}</label>
-                            <input type="text" class="form-control" id="revolut_device_id" name="revolut_device_id"
-                                   value="{{ old('revolut_device_id') }}" autocomplete="off">
-                        </div>
-                        <button type="submit" class="btn btn-success">{{ 'save_and_refresh_accounts'|_ }}</button>
-                    </form>
                 </div>
             </div>
         </div>
@@ -133,6 +117,121 @@
                             </ul>
                         </div>
                     {% endif %}
+
+                    <div class="panel panel-info">
+                        <div class="panel-heading">
+                            <strong>{{ 'bank_connection_category_rules'|_ }}</strong>
+                        </div>
+                        <div class="panel-body">
+                            <p class="text-muted">{{ 'bank_connection_category_rules_help'|_ }}</p>
+                            {% set mccRules = categoryRules.mcc|default([]) %}
+                            {% set overrideRules = categoryRules.overrides|default([]) %}
+                            {% set mccRows = mccRules|merge([{'mcc':'', 'category_id':'', 'enabled': true}]) %}
+                            {% set overrideRows = overrideRules|merge([{'external_id':'', 'description_contains':'', 'mcc':'', 'category_id':'', 'enabled': true}]) %}
+                            <form method="POST" action="{{ route('preferences.bank-connections.category-rules.update') }}">
+                                <input name="_token" type="hidden" value="{{ csrf_token() }}">
+
+                                <h5>{{ 'bank_connection_mcc_rules'|_ }}</h5>
+                                <div class="table-responsive">
+                                    <table class="table table-condensed table-striped">
+                                        <thead>
+                                        <tr>
+                                            <th style="width: 280px;">MCC</th>
+                                            <th>{{ 'category'|_ }}</th>
+                                            <th style="width: 110px;">{{ 'enabled'|_ }}</th>
+                                        </tr>
+                                        </thead>
+                                        <tbody>
+                                        {% for rule in mccRows %}
+                                            <tr>
+                                                <td>
+                                                    <select name="mcc_rules[{{ loop.index0 }}][mcc]" class="form-control input-sm">
+                                                        <option value=""></option>
+                                                        {% if rule.mcc|default('') != '' and mccOptions[rule.mcc] is not defined %}
+                                                            <option value="{{ rule.mcc }}" selected>{{ rule.mcc }} - Custom</option>
+                                                        {% endif %}
+                                                        {% for mcc, title in mccOptions %}
+                                                            <option value="{{ mcc }}" {% if (rule.mcc|default('')) == mcc %}selected{% endif %}>{{ mcc }} - {{ title }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <select name="mcc_rules[{{ loop.index0 }}][category_id]" class="form-control input-sm">
+                                                        <option value="">{{ 'no_category'|_ }}</option>
+                                                        {% for category in categories %}
+                                                            <option value="{{ category.id }}" {% if (rule.category_id|default(0)) == category.id %}selected{% endif %}>{{ category.name }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <label class="checkbox-inline" style="margin-top:0;">
+                                                        <input type="checkbox" name="mcc_rules[{{ loop.index0 }}][enabled]" value="1" {% if rule.enabled is not defined or rule.enabled %}checked{% endif %}>
+                                                        {{ 'enabled'|_ }}
+                                                    </label>
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <h5>{{ 'bank_connection_override_rules'|_ }}</h5>
+                                <p class="text-muted">{{ 'bank_connection_override_rules_help'|_ }}</p>
+                                <div class="table-responsive">
+                                    <table class="table table-condensed table-striped">
+                                        <thead>
+                                        <tr>
+                                            <th>{{ 'external_id'|_ }}</th>
+                                            <th>{{ 'description'|_ }}</th>
+                                            <th style="width: 280px;">MCC</th>
+                                            <th>{{ 'category'|_ }}</th>
+                                            <th style="width: 110px;">{{ 'enabled'|_ }}</th>
+                                        </tr>
+                                        </thead>
+                                        <tbody>
+                                        {% for rule in overrideRows %}
+                                            <tr>
+                                                <td>
+                                                    <input type="text" name="override_rules[{{ loop.index0 }}][external_id]" class="form-control input-sm" value="{{ rule.external_id|default('') }}" placeholder="exact external_id">
+                                                </td>
+                                                <td>
+                                                    <input type="text" name="override_rules[{{ loop.index0 }}][description_contains]" class="form-control input-sm" value="{{ rule.description_contains|default('') }}" placeholder="contains text">
+                                                </td>
+                                                <td>
+                                                    <select name="override_rules[{{ loop.index0 }}][mcc]" class="form-control input-sm">
+                                                        <option value=""></option>
+                                                        {% if rule.mcc|default('') != '' and mccOptions[rule.mcc] is not defined %}
+                                                            <option value="{{ rule.mcc }}" selected>{{ rule.mcc }} - Custom</option>
+                                                        {% endif %}
+                                                        {% for mcc, title in mccOptions %}
+                                                            <option value="{{ mcc }}" {% if (rule.mcc|default('')) == mcc %}selected{% endif %}>{{ mcc }} - {{ title }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <select name="override_rules[{{ loop.index0 }}][category_id]" class="form-control input-sm">
+                                                        <option value="">{{ 'no_category'|_ }}</option>
+                                                        {% for category in categories %}
+                                                            <option value="{{ category.id }}" {% if (rule.category_id|default(0)) == category.id %}selected{% endif %}>{{ category.name }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <label class="checkbox-inline" style="margin-top:0;">
+                                                        <input type="checkbox" name="override_rules[{{ loop.index0 }}][enabled]" value="1" {% if rule.enabled is not defined or rule.enabled %}checked{% endif %}>
+                                                        {{ 'enabled'|_ }}
+                                                    </label>
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <button type="submit" class="btn btn-default">{{ 'save_category_rules'|_ }}</button>
+                            </form>
+                        </div>
+                    </div>
 
                     {% if connections|length == 0 %}
                         <p class="text-muted">{{ 'no_bank_connections_yet'|_ }}</p>
@@ -280,100 +379,6 @@
                                         </table>
                                     </div>
                                 {% endif %}
-
-                                <hr>
-                                <h4>{{ 'bank_connection_category_rules'|_ }}</h4>
-                                <p class="text-muted">{{ 'bank_connection_category_rules_help'|_ }}</p>
-                                {% set mccRules = connection.provider_config.category_rules.mcc|default([]) %}
-                                {% set overrideRules = connection.provider_config.category_rules.overrides|default([]) %}
-                                {% set mccRows = mccRules|merge([{'mcc':'', 'category_id':'', 'enabled': true}]) %}
-                                {% set overrideRows = overrideRules|merge([{'external_id':'', 'description_contains':'', 'mcc':'', 'category_id':'', 'enabled': true}]) %}
-                                <form method="POST" action="{{ route('preferences.bank-connections.category-rules.update', connection.id) }}">
-                                    <input name="_token" type="hidden" value="{{ csrf_token() }}">
-
-                                    <h5>{{ 'bank_connection_mcc_rules'|_ }}</h5>
-                                    <div class="table-responsive">
-                                        <table class="table table-condensed table-striped">
-                                            <thead>
-                                            <tr>
-                                                <th style="width: 120px;">MCC</th>
-                                                <th>{{ 'category'|_ }}</th>
-                                                <th style="width: 110px;">{{ 'enabled'|_ }}</th>
-                                            </tr>
-                                            </thead>
-                                            <tbody>
-                                            {% for rule in mccRows %}
-                                                <tr>
-                                                    <td>
-                                                        <input type="text" name="mcc_rules[{{ loop.index0 }}][mcc]" class="form-control input-sm" value="{{ rule.mcc|default('') }}" placeholder="e.g. 5411">
-                                                    </td>
-                                                    <td>
-                                                        <select name="mcc_rules[{{ loop.index0 }}][category_id]" class="form-control input-sm">
-                                                            <option value="">{{ 'no_category'|_ }}</option>
-                                                            {% for category in categories %}
-                                                                <option value="{{ category.id }}" {% if (rule.category_id|default(0)) == category.id %}selected{% endif %}>{{ category.name }}</option>
-                                                            {% endfor %}
-                                                        </select>
-                                                    </td>
-                                                    <td>
-                                                        <label class="checkbox-inline" style="margin-top:0;">
-                                                            <input type="checkbox" name="mcc_rules[{{ loop.index0 }}][enabled]" value="1" {% if rule.enabled is not defined or rule.enabled %}checked{% endif %}>
-                                                            {{ 'enabled'|_ }}
-                                                        </label>
-                                                    </td>
-                                                </tr>
-                                            {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    <h5>{{ 'bank_connection_override_rules'|_ }}</h5>
-                                    <p class="text-muted">{{ 'bank_connection_override_rules_help'|_ }}</p>
-                                    <div class="table-responsive">
-                                        <table class="table table-condensed table-striped">
-                                            <thead>
-                                            <tr>
-                                                <th>{{ 'external_id'|_ }}</th>
-                                                <th>{{ 'description'|_ }}</th>
-                                                <th style="width: 120px;">MCC</th>
-                                                <th>{{ 'category'|_ }}</th>
-                                                <th style="width: 110px;">{{ 'enabled'|_ }}</th>
-                                            </tr>
-                                            </thead>
-                                            <tbody>
-                                            {% for rule in overrideRows %}
-                                                <tr>
-                                                    <td>
-                                                        <input type="text" name="override_rules[{{ loop.index0 }}][external_id]" class="form-control input-sm" value="{{ rule.external_id|default('') }}" placeholder="exact external_id">
-                                                    </td>
-                                                    <td>
-                                                        <input type="text" name="override_rules[{{ loop.index0 }}][description_contains]" class="form-control input-sm" value="{{ rule.description_contains|default('') }}" placeholder="contains text">
-                                                    </td>
-                                                    <td>
-                                                        <input type="text" name="override_rules[{{ loop.index0 }}][mcc]" class="form-control input-sm" value="{{ rule.mcc|default('') }}" placeholder="e.g. 4829">
-                                                    </td>
-                                                    <td>
-                                                        <select name="override_rules[{{ loop.index0 }}][category_id]" class="form-control input-sm">
-                                                            <option value="">{{ 'no_category'|_ }}</option>
-                                                            {% for category in categories %}
-                                                                <option value="{{ category.id }}" {% if (rule.category_id|default(0)) == category.id %}selected{% endif %}>{{ category.name }}</option>
-                                                            {% endfor %}
-                                                        </select>
-                                                    </td>
-                                                    <td>
-                                                        <label class="checkbox-inline" style="margin-top:0;">
-                                                            <input type="checkbox" name="override_rules[{{ loop.index0 }}][enabled]" value="1" {% if rule.enabled is not defined or rule.enabled %}checked{% endif %}>
-                                                            {{ 'enabled'|_ }}
-                                                        </label>
-                                                    </td>
-                                                </tr>
-                                            {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    <button type="submit" class="btn btn-default">{{ 'save_category_rules'|_ }}</button>
-                                </form>
                             </div>
                         </div>
                     {% endfor %}

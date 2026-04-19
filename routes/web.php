@@ -849,7 +849,6 @@ Route::group(
         Route::post('test-notification', ['uses' => 'PreferencesController@testNotification', 'as' => 'test-notification']);
         Route::get('bank-connections', ['uses' => 'BankConnectionController@index', 'as' => 'bank-connections.index']);
         Route::post('bank-connections', ['uses' => 'BankConnectionController@store', 'as' => 'bank-connections.store']);
-        Route::post('bank-connections/revolut', ['uses' => 'BankConnectionController@storeRevolut', 'as' => 'bank-connections.revolut.store']);
         Route::post('bank-connections/revolut/enable-banking/upload-key', ['uses' => 'BankConnectionController@uploadRevolutEnableBankingKey', 'as' => 'bank-connections.revolut.enable-banking.upload-key']);
         Route::post('bank-connections/revolut/enable-banking/start', ['uses' => 'BankConnectionController@requestRevolutEnableBankingAuth', 'as' => 'bank-connections.revolut.enable-banking.start']);
         Route::get('bank-connections/revolut/enable-banking/callback', ['uses' => 'BankConnectionController@revolutEnableBankingCallback', 'as' => 'bank-connections.revolut.enable-banking.callback']);
@@ -861,7 +860,7 @@ Route::group(
         Route::post('bank-connections/{id}/revolut/refresh-accounts', ['uses' => 'BankConnectionController@refreshRevolutAccounts', 'as' => 'bank-connections.revolut.refresh-accounts']);
         Route::post('bank-connections/{id}/revolut/sync', ['uses' => 'BankConnectionController@syncRevolut', 'as' => 'bank-connections.revolut.sync']);
         Route::post('bank-connections/{id}/accounts/{accountId}', ['uses' => 'BankConnectionController@updateMapping', 'as' => 'bank-connections.accounts.update']);
-        Route::post('bank-connections/{id}/category-rules', ['uses' => 'BankConnectionController@updateCategoryRules', 'as' => 'bank-connections.category-rules.update']);
+        Route::post('bank-connections/category-rules', ['uses' => 'BankConnectionController@updateCategoryRules', 'as' => 'bank-connections.category-rules.update']);
     }
 );
 

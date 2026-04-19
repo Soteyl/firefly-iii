@@ -14,6 +14,7 @@ use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Services\Monobank\MonobankClient;
 use FireflyIII\Services\Monobank\MonobankAccountMapper;
 use FireflyIII\Services\Monobank\MonobankImportService;
+use FireflyIII\Support\Facades\Preferences;
 use FireflyIII\Repositories\TransactionGroup\TransactionGroupRepositoryInterface;
 use FireflyIII\User;
 use Mockery;
@@ -314,23 +315,20 @@ final class MonobankImportServiceTest extends TestCase
             'name'          => 'Special override',
         ]);
 
-        $this->connection->provider_config = [
-            'category_rules' => [
-                'mcc'       => [
-                    ['mcc' => '5814', 'category_id' => $mccCategory->id, 'enabled' => true],
-                ],
-                'overrides' => [
-                    [
-                        'external_id'          => 'monobank:mono-account-1:statement-override',
-                        'description_contains' => '',
-                        'mcc'                  => '',
-                        'category_id'          => $overrideCategory->id,
-                        'enabled'              => true,
-                    ],
+        Preferences::setForUser($this->user, 'bank_connection_category_rules', [
+            'mcc'       => [
+                ['mcc' => '5814', 'category_id' => $mccCategory->id, 'enabled' => true],
+            ],
+            'overrides' => [
+                [
+                    'external_id'          => 'monobank:mono-account-1:statement-override',
+                    'description_contains' => '',
+                    'mcc'                  => '',
+                    'category_id'          => $overrideCategory->id,
+                    'enabled'              => true,
                 ],
             ],
-        ];
-        $this->connection->save();
+        ]);
 
         $baseTimestamp = now()->subMinutes(6)->timestamp;
         $mccStatement = [

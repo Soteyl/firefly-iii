@@ -12,6 +12,7 @@ use FireflyIII\Models\Category;
 use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Services\Revolut\RevolutClient;
 use FireflyIII\Services\Revolut\RevolutImportService;
+use FireflyIII\Support\Facades\Preferences;
 use FireflyIII\User;
 use Mockery;
 use Override;
@@ -118,24 +119,20 @@ final class RevolutImportServiceTest extends TestCase
             'name'          => 'Special payment',
         ]);
 
-        $this->connection->provider_config = [
-            'device_id'      => 'device-123',
-            'category_rules' => [
-                'mcc'       => [
-                    ['mcc' => '5411', 'category_id' => $mccCategory->id, 'enabled' => true],
-                ],
-                'overrides' => [
-                    [
-                        'external_id'          => 'revolut:wallet-main:pocket-eur:rev-leg-override',
-                        'description_contains' => '',
-                        'mcc'                  => '',
-                        'category_id'          => $overrideCategory->id,
-                        'enabled'              => true,
-                    ],
+        Preferences::setForUser($this->user, 'bank_connection_category_rules', [
+            'mcc'       => [
+                ['mcc' => '5411', 'category_id' => $mccCategory->id, 'enabled' => true],
+            ],
+            'overrides' => [
+                [
+                    'external_id'          => 'revolut:wallet-main:pocket-eur:rev-leg-override',
+                    'description_contains' => '',
+                    'mcc'                  => '',
+                    'category_id'          => $overrideCategory->id,
+                    'enabled'              => true,
                 ],
             ],
-        ];
-        $this->connection->save();
+        ]);
 
         $baseTime = now()->subMinutes(8)->timestamp * 1000;
         $mccTransaction = [

@@ -6,11 +6,17 @@ namespace FireflyIII\Services\Banking;
 
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\Category;
+use FireflyIII\Support\Facades\Preferences;
+use FireflyIII\User;
 
 class ImportCategoryRuleService
 {
+    private const PREFERENCE_NAME = 'bank_connection_category_rules';
+
     /** @var array<int, array<int, string>> */
     private array $categoryCache = [];
+    /** @var array<string, array{mcc: array<int, array{mcc: string, category_id: int, enabled: bool}>, overrides: array<int, array{external_id: string, description_contains: string, mcc: string, category_id: int, enabled: bool}>}> */
+    private array $rulesCache = [];
 
     public function apply(BankConnection $connection, array $rawPayload, array $mappedTransaction): array
     {
@@ -112,8 +118,32 @@ class ImportCategoryRuleService
      */
     private function normalizedRules(BankConnection $connection): array
     {
-        $providerConfig = is_array($connection->provider_config) ? $connection->provider_config : [];
-        $rules = is_array($providerConfig['category_rules'] ?? null) ? $providerConfig['category_rules'] : [];
+        $cacheKey = sprintf('%d', (int) $connection->user_id);
+        if (isset($this->rulesCache[$cacheKey])) {
+            return $this->rulesCache[$cacheKey];
+        }
+
+        $rules = [];
+        $user = $connection->user;
+        if (!$user instanceof User) {
+            $user = User::find((int) $connection->user_id);
+        }
+        if ($user instanceof User) {
+            $preference = Preferences::getForUser($user, $this->preferenceName(), null);
+            if (is_array($preference?->data)) {
+                $rules = $preference->data;
+            }
+        }
+        if ([] === $rules && $user instanceof User) {
+            $legacyPreference = Preferences::getForUser($user, sprintf('%s_%s', $this->preferenceName(), trim(mb_strtolower((string) $connection->provider))), null);
+            if (is_array($legacyPreference?->data)) {
+                $rules = $legacyPreference->data;
+            }
+        }
+        if ([] === $rules) {
+            $providerConfig = is_array($connection->provider_config) ? $connection->provider_config : [];
+            $rules = is_array($providerConfig['category_rules'] ?? null) ? $providerConfig['category_rules'] : [];
+        }
         $mccRules = is_array($rules['mcc'] ?? null) ? $rules['mcc'] : [];
         $overrideRules = is_array($rules['overrides'] ?? null) ? $rules['overrides'] : [];
 
@@ -158,7 +188,10 @@ class ImportCategoryRuleService
             ];
         }
 
-        return ['mcc' => $cleanMcc, 'overrides' => $cleanOverrides];
+        $result = ['mcc' => $cleanMcc, 'overrides' => $cleanOverrides];
+        $this->rulesCache[$cacheKey] = $result;
+
+        return $result;
     }
 
     private function extractMcc(array $rawPayload): ?string
@@ -183,5 +216,9 @@ class ImportCategoryRuleService
 
         return null;
     }
-}
 
+    private function preferenceName(): string
+    {
+        return self::PREFERENCE_NAME;
+    }
+}
