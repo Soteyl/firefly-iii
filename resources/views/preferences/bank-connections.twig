@@ -145,13 +145,16 @@
                                         {% for rule in mccRows %}
                                             <tr>
                                                 <td>
+                                                    {% set currentMcc = (rule.mcc|default(''))|trim %}
+                                                    {% set knownMccCodes = mccOptions|keys %}
+                                                    {% set hasKnownMcc = currentMcc != '' and (currentMcc in knownMccCodes) %}
                                                     <select name="mcc_rules[{{ loop.index0 }}][mcc]" class="form-control input-sm">
                                                         <option value=""></option>
-                                                        {% if rule.mcc|default('') != '' and mccOptions[rule.mcc] is not defined %}
-                                                            <option value="{{ rule.mcc }}" selected>{{ rule.mcc }} - Custom</option>
+                                                        {% if currentMcc != '' and not hasKnownMcc %}
+                                                            <option value="{{ currentMcc }}" selected>{{ currentMcc }} - Custom</option>
                                                         {% endif %}
                                                         {% for mcc, title in mccOptions %}
-                                                            <option value="{{ mcc }}" {% if (rule.mcc|default('')) == mcc %}selected{% endif %}>{{ mcc }} - {{ title }}</option>
+                                                            <option value="{{ mcc }}" {% if currentMcc == mcc %}selected{% endif %}>{{ mcc }} - {{ title }}</option>
                                                         {% endfor %}
                                                     </select>
                                                 </td>
@@ -198,13 +201,16 @@
                                                     <input type="text" name="override_rules[{{ loop.index0 }}][description_contains]" class="form-control input-sm" value="{{ rule.description_contains|default('') }}" placeholder="contains text">
                                                 </td>
                                                 <td>
+                                                    {% set currentMcc = (rule.mcc|default(''))|trim %}
+                                                    {% set knownMccCodes = mccOptions|keys %}
+                                                    {% set hasKnownMcc = currentMcc != '' and (currentMcc in knownMccCodes) %}
                                                     <select name="override_rules[{{ loop.index0 }}][mcc]" class="form-control input-sm">
                                                         <option value=""></option>
-                                                        {% if rule.mcc|default('') != '' and mccOptions[rule.mcc] is not defined %}
-                                                            <option value="{{ rule.mcc }}" selected>{{ rule.mcc }} - Custom</option>
+                                                        {% if currentMcc != '' and not hasKnownMcc %}
+                                                            <option value="{{ currentMcc }}" selected>{{ currentMcc }} - Custom</option>
                                                         {% endif %}
                                                         {% for mcc, title in mccOptions %}
-                                                            <option value="{{ mcc }}" {% if (rule.mcc|default('')) == mcc %}selected{% endif %}>{{ mcc }} - {{ title }}</option>
+                                                            <option value="{{ mcc }}" {% if currentMcc == mcc %}selected{% endif %}>{{ mcc }} - {{ title }}</option>
                                                         {% endfor %}
                                                     </select>
                                                 </td>
