@@ -12,6 +12,7 @@ use FireflyIII\Exceptions\RevolutException;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
 use FireflyIII\Models\Note;
+use FireflyIII\Models\Preference;
 use FireflyIII\Models\TransactionJournal;
 use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Repositories\Account\AccountRepositoryInterface;
@@ -22,6 +23,7 @@ use FireflyIII\Support\Facades\Preferences;
 use FireflyIII\User;
 use Illuminate\Contracts\View\Factory;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -34,6 +36,12 @@ use function trans_choice;
 final class BankConnectionController extends Controller
 {
     private const CATEGORY_RULES_PREFERENCE = 'bank_connection_category_rules';
+    private const TELEGRAM_USER_ID_PREFERENCE = 'telegram_assistant_user_id';
+    private const TELEGRAM_OPENAI_TOKEN_PREFERENCE = 'telegram_assistant_openai_api_token';
+    private const TELEGRAM_MODEL_PREFERENCE = 'telegram_assistant_model';
+    private const TELEGRAM_OPENAI_OAUTH_AUTH_URL_PREFERENCE = 'telegram_assistant_openai_oauth_auth_url';
+    private const TELEGRAM_OPENAI_OAUTH_REDIRECT_HINT_PREFERENCE = 'telegram_assistant_openai_oauth_redirect_hint';
+    private const TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE = 'telegram_assistant_openai_oauth_state';
     private const DRAFT_MCC_LOOKBACK_DAYS = 180;
     private const DRAFT_MCC_META_LIMIT = 1500;
 
@@ -62,6 +70,7 @@ final class BankConnectionController extends Controller
         $categories = $user->categories()->orderBy('name')->get(['id', 'name']);
         $categoryRules = $this->getCategoryRulesPreference($user);
         $categoryRules = $this->appendRecentMccDrafts($user, $categoryRules);
+        $telegramAssistantSettings = $this->getTelegramAssistantSettings($user);
 
         return view('preferences.bank-connections', [
             'connections'   => $connections,
@@ -69,6 +78,9 @@ final class BankConnectionController extends Controller
             'categories'    => $categories,
             'categoryRules' => $categoryRules,
             'mccOptions'    => $this->merchantCategoryOptions(),
+            'openAiModelOptions' => $this->openAiModelOptions(),
+            'telegramAssistant' => $telegramAssistantSettings,
+            'telegramAssistantOauthCallbackUrl' => route('preferences.bank-connections.telegram-assistant.openai.oauth.callback'),
             'revolutEnableBankingApplications' => $this->uploadedEnableBankingApplications(),
         ]);
     }
@@ -593,6 +605,156 @@ final class BankConnectionController extends Controller
         ;
     }
 
+    public function updateTelegramAssistantSettings(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'telegram_user_id' => 'nullable|string|max:40',
+            'openai_api_token' => 'nullable|string|max:4000',
+            'openai_model' => 'nullable|string|max:120',
+            'openai_oauth_auth_url' => 'nullable|string|max:2000',
+            'openai_oauth_redirect_hint' => 'nullable|string|max:2000',
+        ]);
+
+        /** @var User $user */
+        $user = auth()->user();
+
+        $telegramUserId = preg_replace('/[^0-9]/', '', trim((string) ($validated['telegram_user_id'] ?? '')));
+        Preferences::setForUser($user, self::TELEGRAM_USER_ID_PREFERENCE, '' === $telegramUserId ? null : $telegramUserId);
+
+        $openAiApiToken = trim((string) ($validated['openai_api_token'] ?? ''));
+        if ('' === $openAiApiToken) {
+            Preferences::setForUser($user, self::TELEGRAM_OPENAI_TOKEN_PREFERENCE, null);
+        } else {
+            Preferences::setEncrypted(self::TELEGRAM_OPENAI_TOKEN_PREFERENCE, $openAiApiToken);
+        }
+
+        $model = trim((string) ($validated['openai_model'] ?? ''));
+        $validModels = array_keys($this->openAiModelOptions());
+        if ('' === $model || !in_array($model, $validModels, true)) {
+            $model = (string) config('banking.telegram_assistant.default_model', 'gpt-5-mini');
+        }
+        Preferences::setForUser($user, self::TELEGRAM_MODEL_PREFERENCE, $model);
+
+        $oauthAuthUrl = trim((string) ($validated['openai_oauth_auth_url'] ?? ''));
+        Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_AUTH_URL_PREFERENCE, '' === $oauthAuthUrl ? null : $oauthAuthUrl);
+        $oauthRedirectHint = trim((string) ($validated['openai_oauth_redirect_hint'] ?? ''));
+        Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_REDIRECT_HINT_PREFERENCE, '' === $oauthRedirectHint ? null : $oauthRedirectHint);
+
+        return redirect()
+            ->route('preferences.bank-connections.index')
+            ->with('success', (string) trans('firefly.telegram_assistant_settings_saved'))
+        ;
+    }
+
+    public function beginOpenAiOAuth(): RedirectResponse
+    {
+        /** @var User $user */
+        $user = auth()->user();
+        $authUrlPreference = Preferences::getForUser($user, self::TELEGRAM_OPENAI_OAUTH_AUTH_URL_PREFERENCE, null);
+        $authUrl = trim((string) ($authUrlPreference?->data ?? ''));
+        if ('' === $authUrl) {
+            return redirect()
+                ->route('preferences.bank-connections.index')
+                ->withErrors(['openai_oauth_auth_url' => (string) trans('firefly.telegram_assistant_oauth_url_missing')])
+            ;
+        }
+
+        $state = (string) Str::uuid();
+        Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE, $state);
+        $separator = str_contains($authUrl, '?') ? '&' : '?';
+        $redirectUri = route('preferences.bank-connections.telegram-assistant.openai.oauth.callback');
+        $target = sprintf(
+            '%s%sstate=%s&redirect_uri=%s',
+            $authUrl,
+            $separator,
+            urlencode($state),
+            urlencode($redirectUri)
+        );
+
+        return redirect()->away($target);
+    }
+
+    public function completeOpenAiOAuth(Request $request): RedirectResponse
+    {
+        /** @var User $user */
+        $user = auth()->user();
+        $state = trim((string) $request->query('state', ''));
+        $expectedState = trim((string) (Preferences::getForUser($user, self::TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE, null)?->data ?? ''));
+        if ('' === $state || '' === $expectedState || !hash_equals($expectedState, $state)) {
+            return redirect()
+                ->route('preferences.bank-connections.index')
+                ->withErrors(['openai_api_token' => (string) trans('firefly.telegram_assistant_oauth_state_mismatch')])
+            ;
+        }
+
+        $apiKey = trim((string) ($request->query('api_key', $request->query('access_token', ''))));
+        if ('' === $apiKey) {
+            return redirect()
+                ->route('preferences.bank-connections.index')
+                ->withErrors(['openai_api_token' => (string) trans('firefly.telegram_assistant_oauth_missing_api_key')])
+            ;
+        }
+
+        Preferences::setEncrypted(self::TELEGRAM_OPENAI_TOKEN_PREFERENCE, $apiKey);
+        Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE, null);
+
+        return redirect()
+            ->route('preferences.bank-connections.index')
+            ->with('success', (string) trans('firefly.telegram_assistant_oauth_connected'))
+        ;
+    }
+
+    public function telegramAssistantRuntimeConfig(Request $request): JsonResponse
+    {
+        $expectedSecret = trim((string) config('banking.telegram_assistant.shared_secret', ''));
+        $incomingSecret = trim((string) $request->header('X-Telegram-Assistant-Secret', $request->query('secret', '')));
+        if ('' === $expectedSecret || '' === $incomingSecret || !hash_equals($expectedSecret, $incomingSecret)) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+
+        $telegramUserId = preg_replace('/[^0-9]/', '', trim((string) $request->query('telegram_user_id', '')));
+        if ('' === $telegramUserId) {
+            return response()->json(['error' => 'telegram_user_id is required'], 422);
+        }
+
+        /** @var null|Preference $preference */
+        $preference = Preference::query()
+            ->where('name', self::TELEGRAM_USER_ID_PREFERENCE)
+            ->where('data', json_encode($telegramUserId))
+            ->first()
+        ;
+        if (!$preference instanceof Preference) {
+            return response()->json([
+                'linked' => false,
+                'telegram_user_id' => $telegramUserId,
+            ]);
+        }
+
+        /** @var null|User $user */
+        $user = User::query()->find((int) $preference->user_id);
+        if (!$user instanceof User) {
+            return response()->json([
+                'linked' => false,
+                'telegram_user_id' => $telegramUserId,
+            ]);
+        }
+
+        $openAiToken = trim((string) (Preferences::getEncryptedForUser($user, self::TELEGRAM_OPENAI_TOKEN_PREFERENCE, null)?->data ?? ''));
+        $model = trim((string) (Preferences::getForUser($user, self::TELEGRAM_MODEL_PREFERENCE, null)?->data ?? ''));
+        if ('' === $model) {
+            $model = (string) config('banking.telegram_assistant.default_model', 'gpt-5-mini');
+        }
+
+        return response()->json([
+            'linked' => true,
+            'telegram_user_id' => $telegramUserId,
+            'firefly_base_url' => trim((string) config('banking.telegram_assistant.firefly_base_url', 'http://app:8080')),
+            'mcp_pat' => null,
+            'openai_api_token' => $openAiToken,
+            'openai_model' => $model,
+        ]);
+    }
+
     /**
      * @throws JsonException
      */
@@ -957,4 +1119,57 @@ final class BankConnectionController extends Controller
 
         return $clean;
     }
+
+    /**
+     * @return array<string, string>
+     */
+    private function openAiModelOptions(): array
+    {
+        $options = config('banking.telegram_assistant.models', []);
+        if (!is_array($options)) {
+            return ['gpt-5-mini' => 'GPT-5 Mini'];
+        }
+        $clean = [];
+        foreach ($options as $model => $label) {
+            $key = trim((string) $model);
+            $value = trim((string) $label);
+            if ('' === $key || '' === $value) {
+                continue;
+            }
+            $clean[$key] = $value;
+        }
+        if ([] === $clean) {
+            $clean = ['gpt-5-mini' => 'GPT-5 Mini'];
+        }
+
+        return $clean;
+    }
+
+    /**
+     * @return array{telegram_user_id: string, openai_api_token_masked: string, openai_model: string, openai_oauth_auth_url: string, openai_oauth_redirect_hint: string}
+     */
+    private function getTelegramAssistantSettings(User $user): array
+    {
+        $telegramUserId = trim((string) (Preferences::getForUser($user, self::TELEGRAM_USER_ID_PREFERENCE, null)?->data ?? ''));
+        $openAiToken = trim((string) (Preferences::getEncryptedForUser($user, self::TELEGRAM_OPENAI_TOKEN_PREFERENCE, null)?->data ?? ''));
+        $maskedToken = '';
+        if ('' !== $openAiToken) {
+            $maskedToken = sprintf('Configured (%s…%s)', mb_substr($openAiToken, 0, 6), mb_substr($openAiToken, -4));
+        }
+        $model = trim((string) (Preferences::getForUser($user, self::TELEGRAM_MODEL_PREFERENCE, null)?->data ?? ''));
+        if ('' === $model) {
+            $model = (string) config('banking.telegram_assistant.default_model', 'gpt-5-mini');
+        }
+        $oauthAuthUrl = trim((string) (Preferences::getForUser($user, self::TELEGRAM_OPENAI_OAUTH_AUTH_URL_PREFERENCE, null)?->data ?? ''));
+        $oauthRedirectHint = trim((string) (Preferences::getForUser($user, self::TELEGRAM_OPENAI_OAUTH_REDIRECT_HINT_PREFERENCE, null)?->data ?? ''));
+
+        return [
+            'telegram_user_id' => $telegramUserId,
+            'openai_api_token_masked' => $maskedToken,
+            'openai_model' => $model,
+            'openai_oauth_auth_url' => $oauthAuthUrl,
+            'openai_oauth_redirect_hint' => $oauthRedirectHint,
+        ];
+    }
+
 }

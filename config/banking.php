@@ -144,4 +144,16 @@ return [
         '9311' => 'Tax payments',
         '9399' => 'Government services (not elsewhere classified)',
     ],
+    'telegram_assistant' => [
+        'shared_secret' => env('TELEGRAM_ASSISTANT_SHARED_SECRET', ''),
+        'firefly_base_url' => env('TELEGRAM_ASSISTANT_FIREFLY_BASE_URL', 'http://app:8080'),
+        'default_model' => env('TELEGRAM_ASSISTANT_DEFAULT_MODEL', 'gpt-5-mini'),
+        'models' => [
+            'gpt-5' => 'GPT-5',
+            'gpt-5-mini' => 'GPT-5 Mini',
+            'gpt-5.2' => 'GPT-5.2',
+            'gpt-4.1' => 'GPT-4.1',
+            'gpt-4o' => 'GPT-4o',
+        ],
+    ],
 ];

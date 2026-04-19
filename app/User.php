@@ -69,7 +69,6 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Str;
-use Laravel\Passport\Contracts\OAuthenticatable;
 use Laravel\Passport\HasApiTokens;
 use NotificationChannels\Pushover\PushoverReceiver;
 use SensitiveParameter;
@@ -79,7 +78,7 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  * @property null|UserGroup $userGroup
  * @property bool           $blocked
  */
-class User extends Authenticatable implements OAuthenticatable
+class User extends Authenticatable
 {
     use HasApiTokens;
     use Notifiable;

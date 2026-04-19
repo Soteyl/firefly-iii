@@ -118,6 +118,94 @@
                         </div>
                     {% endif %}
 
+                    <div class="panel panel-warning">
+                        <div class="panel-heading">
+                            <strong>{{ 'telegram_assistant_settings'|_ }}</strong>
+                        </div>
+                        <div class="panel-body">
+                            <p class="text-muted">{{ 'telegram_assistant_settings_help'|_ }}</p>
+                            <form method="POST" action="{{ route('preferences.bank-connections.telegram-assistant.update') }}">
+                                <input name="_token" type="hidden" value="{{ csrf_token() }}">
+
+                                <div class="form-group">
+                                    <label for="telegram_user_id">
+                                        {{ 'telegram_user_id'|_ }}
+                                        <span class="text-muted" title="{{ 'telegram_user_id_tooltip'|_ }}">(?)</span>
+                                    </label>
+                                    <input
+                                            type="text"
+                                            class="form-control"
+                                            id="telegram_user_id"
+                                            name="telegram_user_id"
+                                            value="{{ old('telegram_user_id', telegramAssistant.telegram_user_id|default('')) }}"
+                                            placeholder="123456789"
+                                    >
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="openai_api_token">{{ 'telegram_assistant_openai_api_token'|_ }}</label>
+                                    <input
+                                            type="password"
+                                            class="form-control"
+                                            id="openai_api_token"
+                                            name="openai_api_token"
+                                            value=""
+                                            autocomplete="off"
+                                            placeholder="sk-..."
+                                    >
+                                    {% if telegramAssistant.openai_api_token_masked|default('') != '' %}
+                                        <small class="text-muted">{{ telegramAssistant.openai_api_token_masked }}</small>
+                                    {% else %}
+                                        <small class="text-muted">{{ 'telegram_assistant_openai_api_token_help'|_ }}</small>
+                                    {% endif %}
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="openai_model">{{ 'telegram_assistant_model'|_ }}</label>
+                                    <select class="form-control" id="openai_model" name="openai_model">
+                                        {% for modelId, modelLabel in openAiModelOptions %}
+                                            <option value="{{ modelId }}" {% if old('openai_model', telegramAssistant.openai_model|default('')) == modelId %}selected{% endif %}>
+                                                {{ modelLabel }} ({{ modelId }})
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+
+                                <hr>
+                                <h5>{{ 'telegram_assistant_oauth'|_ }}</h5>
+                                <p class="text-muted">{{ 'telegram_assistant_oauth_help'|_ }}</p>
+                                <div class="form-group">
+                                    <label for="openai_oauth_auth_url">{{ 'telegram_assistant_oauth_authorize_url'|_ }}</label>
+                                    <input
+                                            type="url"
+                                            class="form-control"
+                                            id="openai_oauth_auth_url"
+                                            name="openai_oauth_auth_url"
+                                            value="{{ old('openai_oauth_auth_url', telegramAssistant.openai_oauth_auth_url|default('')) }}"
+                                            placeholder="https://.../authorize?client_id=..."
+                                    >
+                                </div>
+                                <div class="form-group">
+                                    <label for="openai_oauth_redirect_hint">{{ 'telegram_assistant_oauth_redirect_hint'|_ }}</label>
+                                    <input
+                                            type="url"
+                                            class="form-control"
+                                            id="openai_oauth_redirect_hint"
+                                            name="openai_oauth_redirect_hint"
+                                            value="{{ old('openai_oauth_redirect_hint', telegramAssistant.openai_oauth_redirect_hint|default('')) }}"
+                                            placeholder="{{ telegramAssistantOauthCallbackUrl }}"
+                                    >
+                                    <small class="text-muted">
+                                        {{ 'telegram_assistant_oauth_callback_url'|_ }}: <code>{{ telegramAssistantOauthCallbackUrl }}</code>
+                                    </small>
+                                </div>
+
+                                <button type="submit" class="btn btn-default">{{ 'telegram_assistant_save_settings'|_ }}</button>
+                                <a class="btn btn-primary" href="{{ route('preferences.bank-connections.telegram-assistant.openai.oauth.start') }}" target="_blank">{{ 'telegram_assistant_connect_oauth'|_ }}</a>
+                            </form>
+                        </div>
+                    </div>
+
                     <div class="panel panel-info">
                         <div class="panel-heading">
                             <strong>{{ 'bank_connection_category_rules'|_ }}</strong>

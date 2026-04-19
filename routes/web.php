@@ -861,6 +861,16 @@ Route::group(
         Route::post('bank-connections/{id}/revolut/sync', ['uses' => 'BankConnectionController@syncRevolut', 'as' => 'bank-connections.revolut.sync']);
         Route::post('bank-connections/{id}/accounts/{accountId}', ['uses' => 'BankConnectionController@updateMapping', 'as' => 'bank-connections.accounts.update']);
         Route::post('bank-connections/category-rules', ['uses' => 'BankConnectionController@updateCategoryRules', 'as' => 'bank-connections.category-rules.update']);
+        Route::post('bank-connections/telegram-assistant', ['uses' => 'BankConnectionController@updateTelegramAssistantSettings', 'as' => 'bank-connections.telegram-assistant.update']);
+        Route::get('bank-connections/telegram-assistant/openai/oauth/start', ['uses' => 'BankConnectionController@beginOpenAiOAuth', 'as' => 'bank-connections.telegram-assistant.openai.oauth.start']);
+        Route::get('bank-connections/telegram-assistant/openai/oauth/callback', ['uses' => 'BankConnectionController@completeOpenAiOAuth', 'as' => 'bank-connections.telegram-assistant.openai.oauth.callback']);
+    }
+);
+
+Route::group(
+    ['namespace' => 'FireflyIII\Http\Controllers', 'prefix' => 'telegram-assistant', 'as' => 'telegram-assistant.'],
+    static function (): void {
+        Route::get('config', ['uses' => 'BankConnectionController@telegramAssistantRuntimeConfig', 'as' => 'config']);
     }
 );
 
