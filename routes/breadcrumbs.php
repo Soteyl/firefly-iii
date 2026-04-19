@@ -817,6 +817,13 @@ Breadcrumbs::for(
         $breadcrumbs->push(trans('firefly.oauth_tokens'), route('profile.oauth.index'));
     }
 );
+Breadcrumbs::for(
+    'profile.telegram-assistant.index',
+    static function (Generator $breadcrumbs): void {
+        $breadcrumbs->parent('profile.index');
+        $breadcrumbs->push(trans('firefly.telegram_assistant_settings'), route('profile.telegram-assistant.index'));
+    }
+);
 
 
 

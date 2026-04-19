@@ -861,9 +861,6 @@ Route::group(
         Route::post('bank-connections/{id}/revolut/sync', ['uses' => 'BankConnectionController@syncRevolut', 'as' => 'bank-connections.revolut.sync']);
         Route::post('bank-connections/{id}/accounts/{accountId}', ['uses' => 'BankConnectionController@updateMapping', 'as' => 'bank-connections.accounts.update']);
         Route::post('bank-connections/category-rules', ['uses' => 'BankConnectionController@updateCategoryRules', 'as' => 'bank-connections.category-rules.update']);
-        Route::post('bank-connections/telegram-assistant', ['uses' => 'BankConnectionController@updateTelegramAssistantSettings', 'as' => 'bank-connections.telegram-assistant.update']);
-        Route::get('bank-connections/telegram-assistant/openai/oauth/start', ['uses' => 'BankConnectionController@beginOpenAiOAuth', 'as' => 'bank-connections.telegram-assistant.openai.oauth.start']);
-        Route::get('bank-connections/telegram-assistant/openai/oauth/callback', ['uses' => 'BankConnectionController@completeOpenAiOAuth', 'as' => 'bank-connections.telegram-assistant.openai.oauth.callback']);
     }
 );
 
@@ -893,6 +890,10 @@ Route::group(
 
         // new oauth pages
         Route::get('oauth', ['uses' => 'Profile\OAuthController@index', 'as' => 'oauth.index']);
+        Route::get('telegram-assistant', ['uses' => 'BankConnectionController@telegramAssistantSettings', 'as' => 'telegram-assistant.index']);
+        Route::post('telegram-assistant', ['uses' => 'BankConnectionController@updateTelegramAssistantSettings', 'as' => 'telegram-assistant.update']);
+        Route::get('telegram-assistant/openai/oauth/start', ['uses' => 'BankConnectionController@beginOpenAiOAuth', 'as' => 'telegram-assistant.openai.oauth.start']);
+        Route::get('telegram-assistant/openai/oauth/callback', ['uses' => 'BankConnectionController@completeOpenAiOAuth', 'as' => 'telegram-assistant.openai.oauth.callback']);
     }
 );
 

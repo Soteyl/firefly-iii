@@ -43,6 +43,9 @@
                                             <li>
                                                 <a href="{{ route('profile.change-password') }}">{{ 'change_your_password'|_ }}</a>
                                             </li>
+                                            <li>
+                                                <a href="{{ route('profile.telegram-assistant.index') }}">{{ 'telegram_assistant_settings'|_ }}</a>
+                                            </li>
                                         {% if enabled2FA == true %}
                                             <li>
                                                 <a href="{{ route('profile.mfa.index') }}">{{ 'manage_mfa_settings'|_ }}</a>

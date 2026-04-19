@@ -70,7 +70,6 @@ final class BankConnectionController extends Controller
         $categories = $user->categories()->orderBy('name')->get(['id', 'name']);
         $categoryRules = $this->getCategoryRulesPreference($user);
         $categoryRules = $this->appendRecentMccDrafts($user, $categoryRules);
-        $telegramAssistantSettings = $this->getTelegramAssistantSettings($user);
 
         return view('preferences.bank-connections', [
             'connections'   => $connections,
@@ -78,10 +77,21 @@ final class BankConnectionController extends Controller
             'categories'    => $categories,
             'categoryRules' => $categoryRules,
             'mccOptions'    => $this->merchantCategoryOptions(),
-            'openAiModelOptions' => $this->openAiModelOptions(),
-            'telegramAssistant' => $telegramAssistantSettings,
-            'telegramAssistantOauthCallbackUrl' => route('preferences.bank-connections.telegram-assistant.openai.oauth.callback'),
             'revolutEnableBankingApplications' => $this->uploadedEnableBankingApplications(),
+        ]);
+    }
+
+    public function telegramAssistantSettings(): Factory|View
+    {
+        /** @var User $user */
+        $user = auth()->user();
+        app('view')->share('title', (string) trans('firefly.telegram_assistant_settings'));
+        app('view')->share('mainTitleIcon', 'fa-telegram');
+
+        return view('profile.telegram-assistant', [
+            'telegramAssistant' => $this->getTelegramAssistantSettings($user),
+            'openAiModelOptions' => $this->openAiModelOptions(),
+            'telegramAssistantOauthCallbackUrl' => route('profile.telegram-assistant.openai.oauth.callback'),
         ]);
     }
 
@@ -641,7 +651,7 @@ final class BankConnectionController extends Controller
         Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_REDIRECT_HINT_PREFERENCE, '' === $oauthRedirectHint ? null : $oauthRedirectHint);
 
         return redirect()
-            ->route('preferences.bank-connections.index')
+            ->route('profile.telegram-assistant.index')
             ->with('success', (string) trans('firefly.telegram_assistant_settings_saved'))
         ;
     }
@@ -654,7 +664,7 @@ final class BankConnectionController extends Controller
         $authUrl = trim((string) ($authUrlPreference?->data ?? ''));
         if ('' === $authUrl) {
             return redirect()
-                ->route('preferences.bank-connections.index')
+                ->route('profile.telegram-assistant.index')
                 ->withErrors(['openai_oauth_auth_url' => (string) trans('firefly.telegram_assistant_oauth_url_missing')])
             ;
         }
@@ -662,7 +672,7 @@ final class BankConnectionController extends Controller
         $state = (string) Str::uuid();
         Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE, $state);
         $separator = str_contains($authUrl, '?') ? '&' : '?';
-        $redirectUri = route('preferences.bank-connections.telegram-assistant.openai.oauth.callback');
+        $redirectUri = route('profile.telegram-assistant.openai.oauth.callback');
         $target = sprintf(
             '%s%sstate=%s&redirect_uri=%s',
             $authUrl,
@@ -682,7 +692,7 @@ final class BankConnectionController extends Controller
         $expectedState = trim((string) (Preferences::getForUser($user, self::TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE, null)?->data ?? ''));
         if ('' === $state || '' === $expectedState || !hash_equals($expectedState, $state)) {
             return redirect()
-                ->route('preferences.bank-connections.index')
+                ->route('profile.telegram-assistant.index')
                 ->withErrors(['openai_api_token' => (string) trans('firefly.telegram_assistant_oauth_state_mismatch')])
             ;
         }
@@ -690,7 +700,7 @@ final class BankConnectionController extends Controller
         $apiKey = trim((string) ($request->query('api_key', $request->query('access_token', ''))));
         if ('' === $apiKey) {
             return redirect()
-                ->route('preferences.bank-connections.index')
+                ->route('profile.telegram-assistant.index')
                 ->withErrors(['openai_api_token' => (string) trans('firefly.telegram_assistant_oauth_missing_api_key')])
             ;
         }
@@ -699,7 +709,7 @@ final class BankConnectionController extends Controller
         Preferences::setForUser($user, self::TELEGRAM_OPENAI_OAUTH_STATE_PREFERENCE, null);
 
         return redirect()
-            ->route('preferences.bank-connections.index')
+            ->route('profile.telegram-assistant.index')
             ->with('success', (string) trans('firefly.telegram_assistant_oauth_connected'))
         ;
     }
