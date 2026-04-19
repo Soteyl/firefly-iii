@@ -8,6 +8,7 @@ use FireflyIII\Enums\AccountTypeEnum;
 use FireflyIII\Models\Account;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
+use FireflyIII\Models\Category;
 use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Services\Revolut\RevolutClient;
 use FireflyIII\Services\Revolut\RevolutImportService;
@@ -104,6 +105,92 @@ final class RevolutImportServiceTest extends TestCase
         $this->assertSame(1, $run->stats_json['skipped']);
     }
 
+    public function testAppliesOverrideAndMccCategoryRules(): void
+    {
+        $mccCategory = Category::create([
+            'user_id'       => $this->user->id,
+            'user_group_id' => $this->user->user_group_id,
+            'name'          => 'Groceries',
+        ]);
+        $overrideCategory = Category::create([
+            'user_id'       => $this->user->id,
+            'user_group_id' => $this->user->user_group_id,
+            'name'          => 'Special payment',
+        ]);
+
+        $this->connection->provider_config = [
+            'device_id'      => 'device-123',
+            'category_rules' => [
+                'mcc'       => [
+                    ['mcc' => '5411', 'category_id' => $mccCategory->id, 'enabled' => true],
+                ],
+                'overrides' => [
+                    [
+                        'external_id'          => 'revolut:wallet-main:pocket-eur:rev-leg-override',
+                        'description_contains' => '',
+                        'mcc'                  => '',
+                        'category_id'          => $overrideCategory->id,
+                        'enabled'              => true,
+                    ],
+                ],
+            ],
+        ];
+        $this->connection->save();
+
+        $baseTime = now()->subMinutes(8)->timestamp * 1000;
+        $mccTransaction = [
+            'id'          => 'rev-tx-mcc',
+            'legId'       => 'rev-leg-mcc',
+            'createdDate' => $baseTime,
+            'amount'      => -4500,
+            'currency'    => 'EUR',
+            'description' => 'MCC purchase',
+            'category'    => 'shopping',
+            'type'        => 'CARD_PAYMENT',
+            'state'       => 'COMPLETED',
+            'merchant'    => ['name' => 'Market', 'categoryCode' => '5411'],
+        ];
+        $overrideTransaction = [
+            'id'          => 'rev-tx-override',
+            'legId'       => 'rev-leg-override',
+            'createdDate' => $baseTime + 1000,
+            'amount'      => -5500,
+            'currency'    => 'EUR',
+            'description' => 'Override purchase',
+            'category'    => 'shopping',
+            'type'        => 'CARD_PAYMENT',
+            'state'       => 'COMPLETED',
+            'merchant'    => ['name' => 'Market', 'categoryCode' => '5411'],
+        ];
+
+        $mock = Mockery::mock(RevolutClient::class);
+        $mock->shouldReceive('getTransactions')->once()->andReturn([$mccTransaction, $overrideTransaction]);
+        app()->instance(RevolutClient::class, $mock);
+
+        /** @var RevolutImportService $service */
+        $service = app(RevolutImportService::class);
+        $run = $service->syncConnection($this->connection, 'device-123', 'manual');
+
+        $this->assertSame('success', $run->status);
+        $this->assertSame(2, $run->stats_json['imported']);
+
+        /** @var TransactionJournalMeta $mccMeta */
+        $mccMeta = TransactionJournalMeta::query()
+            ->where('name', 'external_id')
+            ->where('data', json_encode('revolut:wallet-main:pocket-eur:rev-leg-mcc'))
+            ->firstOrFail()
+        ;
+        $this->assertSame('Groceries', $mccMeta->transactionJournal->categories()->firstOrFail()->name);
+
+        /** @var TransactionJournalMeta $overrideMeta */
+        $overrideMeta = TransactionJournalMeta::query()
+            ->where('name', 'external_id')
+            ->where('data', json_encode('revolut:wallet-main:pocket-eur:rev-leg-override'))
+            ->firstOrFail()
+        ;
+        $this->assertSame('Special payment', $overrideMeta->transactionJournal->categories()->firstOrFail()->name);
+    }
+
     #[Override]
     protected function setUp(): void
     {
@@ -131,6 +218,8 @@ final class RevolutImportServiceTest extends TestCase
 
         $this->mapping = BankConnectionAccount::create([
             'bank_connection_id'    => $this->connection->id,
+            'mono_account_id'       => 'not-used-for-revolut',
+            'mono_account_type'     => 'BLACK',
             'revolut_account_id'    => 'wallet-main:pocket-eur',
             'revolut_wallet_id'     => 'wallet-main',
             'revolut_account_type'  => 'CURRENT',

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FireflyIII\Services\Revolut;
 
 use Carbon\Carbon;
+use FireflyIII\Services\Banking\ImportCategoryRuleService;
 use FireflyIII\Exceptions\FireflyException;
 use FireflyIII\Exceptions\RevolutException;
 use FireflyIII\Models\BankConnection;
@@ -29,6 +30,7 @@ class RevolutImportService
         private readonly RevolutClient $client,
         private readonly EnableBankingClient $enableBankingClient,
         private readonly RevolutTransactionMapper $transactionMapper,
+        private readonly ImportCategoryRuleService $categoryRuleService,
         private readonly TransactionGroupRepositoryInterface $transactionGroupRepository,
     ) {
     }
@@ -176,6 +178,9 @@ class RevolutImportService
                 ++$stats['skipped'];
                 continue;
             }
+            if (isset($mapped['transactions'][0]) && is_array($mapped['transactions'][0])) {
+                $mapped['transactions'][0] = $this->categoryRuleService->apply($connection, $transaction, $mapped['transactions'][0]);
+            }
             if ($this->matchesExistingJournal($connection, $mapped['transactions'][0] ?? [])) {
                 ++$stats['duplicates'];
                 $lastSeenId = (string) ($transaction['legId'] ?? $transaction['id'] ?? $lastSeenId);
@@ -258,6 +263,9 @@ class RevolutImportService
             if (null === $mapped) {
                 ++$stats['skipped'];
                 continue;
+            }
+            if (isset($mapped['transactions'][0]) && is_array($mapped['transactions'][0])) {
+                $mapped['transactions'][0] = $this->categoryRuleService->apply($connection, $transaction, $mapped['transactions'][0]);
             }
             if ($this->matchesExistingJournal($connection, $mapped['transactions'][0] ?? [])) {
                 ++$stats['duplicates'];

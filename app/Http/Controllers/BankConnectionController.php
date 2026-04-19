@@ -51,10 +51,12 @@ final class BankConnectionController extends Controller
             AccountTypeEnum::ASSET->value,
             AccountTypeEnum::DEFAULT->value,
         ]);
+        $categories = $user->categories()->orderBy('name')->get(['id', 'name']);
 
         return view('preferences.bank-connections', [
             'connections'   => $connections,
             'assetAccounts' => $assetAccounts,
+            'categories'    => $categories,
             'revolutEnableBankingApplications' => $this->uploadedEnableBankingApplications(),
         ]);
     }
@@ -108,12 +110,15 @@ final class BankConnectionController extends Controller
         $user = auth()->user();
         /** @var BankConnection $connection */
         $connection = $user->bankConnections()->firstOrNew(['provider' => 'revolut']);
+        $existingConfig = is_array($connection->provider_config) ? $connection->provider_config : [];
         $connection->user_id = $user->id;
         $connection->user_group_id = $user->user_group_id;
         $connection->provider = 'revolut';
         $connection->status = 'pending';
         $connection->access_token = $data['revolut_access_token'];
         $connection->provider_config = [
+            ...$existingConfig,
+            'integration' => 'manual',
             'device_id' => $data['revolut_device_id'],
         ];
         if (null === $connection->webhook_path_secret || '' === $connection->webhook_path_secret) {
@@ -263,6 +268,7 @@ final class BankConnectionController extends Controller
         $user = auth()->user();
         /** @var BankConnection $connection */
         $connection = $user->bankConnections()->firstOrNew(['provider' => 'revolut']);
+        $existingConfig = is_array($connection->provider_config) ? $connection->provider_config : [];
         $connection->user_id = $user->id;
         $connection->user_group_id = $user->user_group_id;
         $connection->provider = 'revolut';
@@ -272,8 +278,9 @@ final class BankConnectionController extends Controller
             $connection->access_token = 'enable_banking';
         }
         $connection->provider_config = [
-            'integration'     => 'enable_banking',
-            'enable_banking'  => [
+            ...$existingConfig,
+            'integration'    => 'enable_banking',
+            'enable_banking' => [
                 'application_id'   => $applicationId,
                 'country'          => $country,
             ],
@@ -329,6 +336,7 @@ final class BankConnectionController extends Controller
         $user = auth()->user();
         /** @var BankConnection $connection */
         $connection = $user->bankConnections()->firstOrNew(['provider' => 'revolut']);
+        $existingConfig = is_array($connection->provider_config) ? $connection->provider_config : [];
         $connection->user_id = $user->id;
         $connection->user_group_id = $user->user_group_id;
         $connection->provider = 'revolut';
@@ -338,6 +346,7 @@ final class BankConnectionController extends Controller
             $connection->access_token = 'enable_banking';
         }
         $connection->provider_config = [
+            ...$existingConfig,
             'integration'    => 'enable_banking',
             'enable_banking' => [
                 'application_id' => strtolower($appId),
@@ -496,6 +505,85 @@ final class BankConnectionController extends Controller
         $mapping->save();
 
         return redirect()->route('preferences.bank-connections.index')->with('success', (string) trans('firefly.bank_account_mapping_saved'));
+    }
+
+    public function updateCategoryRules(Request $request, int $id): RedirectResponse
+    {
+        $connection = $this->findConnection($id);
+
+        $validated = $request->validate([
+            'mcc_rules'                        => 'nullable|array',
+            'mcc_rules.*.mcc'                  => 'nullable|string|max:8',
+            'mcc_rules.*.category_id'          => 'nullable|integer|min:1',
+            'mcc_rules.*.enabled'              => 'nullable|boolean',
+            'override_rules'                   => 'nullable|array',
+            'override_rules.*.external_id'     => 'nullable|string|max:255',
+            'override_rules.*.description_contains' => 'nullable|string|max:255',
+            'override_rules.*.mcc'             => 'nullable|string|max:8',
+            'override_rules.*.category_id'     => 'nullable|integer|min:1',
+            'override_rules.*.enabled'         => 'nullable|boolean',
+        ]);
+
+        /** @var User $user */
+        $user = auth()->user();
+        $validCategoryIds = $user->categories()->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+        $validCategoryLookup = array_fill_keys($validCategoryIds, true);
+
+        $mccRules = [];
+        $inputMccRules = is_array($validated['mcc_rules'] ?? null) ? $validated['mcc_rules'] : [];
+        foreach ($inputMccRules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            $mcc = preg_replace('/\D+/', '', trim((string) ($rule['mcc'] ?? '')));
+            $categoryId = (int) ($rule['category_id'] ?? 0);
+            if ('' === $mcc || $categoryId <= 0 || !isset($validCategoryLookup[$categoryId])) {
+                continue;
+            }
+            $mccRules[] = [
+                'mcc'         => $mcc,
+                'category_id' => $categoryId,
+                'enabled'     => (bool) ($rule['enabled'] ?? false),
+            ];
+        }
+
+        $overrideRules = [];
+        $inputOverrides = is_array($validated['override_rules'] ?? null) ? $validated['override_rules'] : [];
+        foreach ($inputOverrides as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            $externalId = trim((string) ($rule['external_id'] ?? ''));
+            $descriptionContains = trim((string) ($rule['description_contains'] ?? ''));
+            $mcc = preg_replace('/\D+/', '', trim((string) ($rule['mcc'] ?? '')));
+            $categoryId = (int) ($rule['category_id'] ?? 0);
+            if ($categoryId <= 0 || !isset($validCategoryLookup[$categoryId])) {
+                continue;
+            }
+            if ('' === $externalId && '' === $descriptionContains && '' === $mcc) {
+                continue;
+            }
+            $overrideRules[] = [
+                'external_id'          => $externalId,
+                'description_contains' => $descriptionContains,
+                'mcc'                  => $mcc,
+                'category_id'          => $categoryId,
+                'enabled'              => (bool) ($rule['enabled'] ?? false),
+            ];
+        }
+
+        $providerConfig = is_array($connection->provider_config) ? $connection->provider_config : [];
+        $providerConfig['category_rules'] = [
+            'mcc'       => $mccRules,
+            'overrides' => $overrideRules,
+        ];
+        $connection->provider_config = $providerConfig;
+        $connection->save();
+
+        return redirect()
+            ->route('preferences.bank-connections.index')
+            ->with('success', (string) trans('firefly.bank_connection_category_rules_saved'))
+        ;
     }
 
     /**

@@ -8,6 +8,7 @@ use FireflyIII\Enums\AccountTypeEnum;
 use FireflyIII\Models\Account;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
+use FireflyIII\Models\Category;
 use FireflyIII\Models\TransactionJournal;
 use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Services\Monobank\MonobankClient;
@@ -288,7 +289,7 @@ final class MonobankImportServiceTest extends TestCase
         $this->assertSame('Transfer', $journal->transactionType->type);
 
         $accounts = $journal->transactions->pluck('account_id')->sort()->values()->toArray();
-        $this->assertSameCanonicalizing([$this->assetAccount->id, $secondAssetAccount->id], $accounts);
+        $this->assertEqualsCanonicalizing([$this->assetAccount->id, $secondAssetAccount->id], $accounts);
 
         $this->assertSame(
             1,
@@ -298,6 +299,82 @@ final class MonobankImportServiceTest extends TestCase
                 ->where('data', json_encode($pairExternal))
                 ->count()
         );
+    }
+
+    public function testAppliesOverrideAndMccCategoryRules(): void
+    {
+        $mccCategory = Category::create([
+            'user_id'       => $this->user->id,
+            'user_group_id' => $this->user->user_group_id,
+            'name'          => 'Food',
+        ]);
+        $overrideCategory = Category::create([
+            'user_id'       => $this->user->id,
+            'user_group_id' => $this->user->user_group_id,
+            'name'          => 'Special override',
+        ]);
+
+        $this->connection->provider_config = [
+            'category_rules' => [
+                'mcc'       => [
+                    ['mcc' => '5814', 'category_id' => $mccCategory->id, 'enabled' => true],
+                ],
+                'overrides' => [
+                    [
+                        'external_id'          => 'monobank:mono-account-1:statement-override',
+                        'description_contains' => '',
+                        'mcc'                  => '',
+                        'category_id'          => $overrideCategory->id,
+                        'enabled'              => true,
+                    ],
+                ],
+            ],
+        ];
+        $this->connection->save();
+
+        $baseTimestamp = now()->subMinutes(6)->timestamp;
+        $mccStatement = [
+            'id'           => 'statement-mcc',
+            'time'         => $baseTimestamp,
+            'amount'       => -21900,
+            'currencyCode' => 980,
+            'description'  => 'Cafe by MCC',
+            'mcc'          => 5814,
+        ];
+        $overrideStatement = [
+            'id'           => 'statement-override',
+            'time'         => $baseTimestamp + 1,
+            'amount'       => -31900,
+            'currencyCode' => 980,
+            'description'  => 'Cafe override',
+            'mcc'          => 5814,
+        ];
+
+        $mock = Mockery::mock(MonobankClient::class);
+        $mock->shouldReceive('getStatements')->once()->andReturn([$mccStatement, $overrideStatement]);
+        app()->instance(MonobankClient::class, $mock);
+
+        /** @var MonobankImportService $service */
+        $service = app(MonobankImportService::class);
+        $run = $service->syncConnection($this->connection, 'manual');
+        $this->assertSame('success', $run->status);
+        $this->assertSame(2, $run->stats_json['imported']);
+
+        /** @var TransactionJournalMeta $mccMeta */
+        $mccMeta = TransactionJournalMeta::query()
+            ->where('name', 'external_id')
+            ->where('data', json_encode('monobank:mono-account-1:statement-mcc'))
+            ->firstOrFail()
+        ;
+        $this->assertSame('Food', $mccMeta->transactionJournal->categories()->firstOrFail()->name);
+
+        /** @var TransactionJournalMeta $overrideMeta */
+        $overrideMeta = TransactionJournalMeta::query()
+            ->where('name', 'external_id')
+            ->where('data', json_encode('monobank:mono-account-1:statement-override'))
+            ->firstOrFail()
+        ;
+        $this->assertSame('Special override', $overrideMeta->transactionJournal->categories()->firstOrFail()->name);
     }
 
     #[Override]

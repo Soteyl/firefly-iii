@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FireflyIII\Services\Monobank;
 
 use Carbon\Carbon;
+use FireflyIII\Services\Banking\ImportCategoryRuleService;
 use FireflyIII\Exceptions\FireflyException;
 use FireflyIII\Exceptions\MonobankException;
 use FireflyIII\Models\BankConnection;
@@ -32,6 +33,7 @@ class MonobankImportService
     public function __construct(
         private readonly MonobankClient $client,
         private readonly MonobankTransactionMapper $transactionMapper,
+        private readonly ImportCategoryRuleService $categoryRuleService,
         private readonly TransactionGroupRepositoryInterface $transactionGroupRepository,
     ) {
     }
@@ -190,6 +192,9 @@ class MonobankImportService
             if (null === $mapped) {
                 ++$stats['skipped'];
                 continue;
+            }
+            if (isset($mapped['transactions'][0]) && is_array($mapped['transactions'][0])) {
+                $mapped['transactions'][0] = $this->categoryRuleService->apply($connection, $statement, $mapped['transactions'][0]);
             }
             if ($this->matchesExistingJournal($connection, $mapped['transactions'][0] ?? [])) {
                 ++$stats['duplicates'];

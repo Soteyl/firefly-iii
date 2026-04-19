@@ -861,6 +861,7 @@ Route::group(
         Route::post('bank-connections/{id}/revolut/refresh-accounts', ['uses' => 'BankConnectionController@refreshRevolutAccounts', 'as' => 'bank-connections.revolut.refresh-accounts']);
         Route::post('bank-connections/{id}/revolut/sync', ['uses' => 'BankConnectionController@syncRevolut', 'as' => 'bank-connections.revolut.sync']);
         Route::post('bank-connections/{id}/accounts/{accountId}', ['uses' => 'BankConnectionController@updateMapping', 'as' => 'bank-connections.accounts.update']);
+        Route::post('bank-connections/{id}/category-rules', ['uses' => 'BankConnectionController@updateCategoryRules', 'as' => 'bank-connections.category-rules.update']);
     }
 );
 
