@@ -8,6 +8,7 @@ use FireflyIII\Enums\AccountTypeEnum;
 use FireflyIII\Models\Account;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
+use FireflyIII\Models\TransactionJournal;
 use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Services\Monobank\MonobankClient;
 use FireflyIII\Services\Monobank\MonobankAccountMapper;
@@ -209,6 +210,94 @@ final class MonobankImportServiceTest extends TestCase
         $this->assertSame('success', $run->status);
         $this->assertSame(0, $run->stats_json['imported']);
         $this->assertSame(0, $run->stats_json['skipped']);
+    }
+
+    public function testMapsInternalCardTransferPairToSingleTransfer(): void
+    {
+        $secondAssetAccount = Account::factory()
+            ->for($this->user)
+            ->withType(AccountTypeEnum::ASSET)
+            ->create(['name' => 'Monobank second asset'])
+        ;
+
+        $secondMapping = BankConnectionAccount::create([
+            'bank_connection_id' => $this->connection->id,
+            'mono_account_id'    => 'mono-account-2',
+            'mono_currency_code' => 840,
+            'firefly_account_id' => $secondAssetAccount->id,
+            'enabled'            => true,
+            'sync_from_ts'       => now()->subDays(3)->timestamp,
+        ]);
+
+        $baseTimestamp = now()->subMinutes(15)->timestamp;
+        $outbound = [
+            'id'              => 'stmt-out-1',
+            'time'            => $baseTimestamp,
+            'description'     => 'Переказ на картку',
+            'mcc'             => 4829,
+            'originalMcc'     => 4829,
+            'amount'          => -3500,
+            'operationAmount' => -152800,
+            'currencyCode'    => 980,
+        ];
+        $inbound = [
+            'id'              => 'stmt-in-1',
+            'time'            => $baseTimestamp + 8,
+            'description'     => 'З доларової картки',
+            'mcc'             => 4829,
+            'originalMcc'     => 4829,
+            'amount'          => 152800,
+            'operationAmount' => 3500,
+            'currencyCode'    => 840,
+        ];
+
+        $mock = Mockery::mock(MonobankClient::class);
+        $mock->shouldReceive('getStatements')
+            ->once()
+            ->withArgs(function (string $token, string $accountId, int $fromTimestamp, int $toTimestamp): bool {
+                return 'token-1234567890' === $token && 'mono-account-1' === $accountId;
+            })
+            ->andReturn([$outbound]);
+        $mock->shouldReceive('getStatements')
+            ->once()
+            ->withArgs(function (string $token, string $accountId, int $fromTimestamp, int $toTimestamp) use ($secondMapping): bool {
+                return 'token-1234567890' === $token && $secondMapping->mono_account_id === $accountId;
+            })
+            ->andReturn([$inbound]);
+        app()->instance(MonobankClient::class, $mock);
+
+        /** @var MonobankImportService $service */
+        $service = app(MonobankImportService::class);
+        $run = $service->syncConnection($this->connection, 'manual');
+
+        $this->assertSame('success', $run->status);
+        $this->assertSame(1, $run->stats_json['imported']);
+        $this->assertSame(1, $run->stats_json['duplicates']);
+
+        $primaryExternal = 'monobank:mono-account-1:stmt-out-1';
+        $pairExternal = sprintf('monobank:%s:stmt-in-1', $secondMapping->mono_account_id);
+
+        /** @var TransactionJournalMeta $primaryMeta */
+        $primaryMeta = TransactionJournalMeta::query()
+            ->where('name', 'external_id')
+            ->where('data', json_encode($primaryExternal))
+            ->firstOrFail()
+        ;
+        /** @var TransactionJournal $journal */
+        $journal = $primaryMeta->transactionJournal;
+        $this->assertSame('Transfer', $journal->transactionType->type);
+
+        $accounts = $journal->transactions->pluck('account_id')->sort()->values()->toArray();
+        $this->assertSameCanonicalizing([$this->assetAccount->id, $secondAssetAccount->id], $accounts);
+
+        $this->assertSame(
+            1,
+            TransactionJournalMeta::query()
+                ->where('transaction_journal_id', $journal->id)
+                ->where('name', 'monobank_pair_external_id')
+                ->where('data', json_encode($pairExternal))
+                ->count()
+        );
     }
 
     #[Override]

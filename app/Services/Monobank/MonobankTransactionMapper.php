@@ -71,6 +71,62 @@ class MonobankTransactionMapper
         ];
     }
 
+    public function mapInternalTransfer(BankConnectionAccount $mapping, BankConnectionAccount $counterparty, array $statement): ?array
+    {
+        $amount = (int) ($statement['amount'] ?? 0);
+        if (0 === $amount) {
+            return null;
+        }
+
+        $connection = $mapping->bankConnection;
+        $user       = $connection->user;
+        if (
+            !$user instanceof User
+            || null === $mapping->firefly_account_id
+            || null === $counterparty->firefly_account_id
+        ) {
+            return null;
+        }
+
+        $externalId   = $this->externalId($mapping, $statement);
+        $currencyCode = $this->currencyMapper->alphaFromNumeric($mapping->mono_currency_code ?? $this->extractNumericCurrencyCode($statement));
+        if (null === $externalId || null === $currencyCode) {
+            return null;
+        }
+
+        $description = $this->description($statement, $externalId);
+        $formatted   = $this->formatMinorAmount(abs($amount), $currencyCode);
+        $notes       = $this->notes($statement);
+        if (null === $notes) {
+            $notes = 'Monobank internal transfer matched automatically.';
+        }
+        if (null !== $notes && !str_contains($notes, 'Monobank internal transfer matched automatically.')) {
+            $notes = sprintf("%s\n%s", $notes, 'Monobank internal transfer matched automatically.');
+        }
+
+        $sourceId      = $amount < 0 ? (int) $mapping->firefly_account_id : (int) $counterparty->firefly_account_id;
+        $destinationId = $amount < 0 ? (int) $counterparty->firefly_account_id : (int) $mapping->firefly_account_id;
+
+        return [
+            'user'             => $user,
+            'user_group'       => $user->userGroup,
+            'apply_rules'      => true,
+            'fire_webhooks'    => true,
+            'batch_submission' => false,
+            'transactions'     => [[
+                'type'           => TransactionTypeEnum::TRANSFER->value,
+                'date'           => $this->timestamp($statement),
+                'amount'         => $formatted,
+                'currency_code'  => $currencyCode,
+                'description'    => $description,
+                'external_id'    => $externalId,
+                'notes'          => $notes,
+                'source_id'      => $sourceId,
+                'destination_id' => $destinationId,
+            ]],
+        ];
+    }
+
     private function counterpartyName(array $statement, int $amount): string
     {
         $candidates = [

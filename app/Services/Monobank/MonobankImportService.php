@@ -7,17 +7,19 @@ namespace FireflyIII\Services\Monobank;
 use Carbon\Carbon;
 use FireflyIII\Exceptions\FireflyException;
 use FireflyIII\Exceptions\MonobankException;
-use FireflyIII\Models\Transaction;
-use FireflyIII\Models\TransactionJournal;
-use FireflyIII\Models\TransactionType;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
 use FireflyIII\Models\BankSyncRun;
+use FireflyIII\Models\Transaction;
+use FireflyIII\Models\TransactionGroup;
+use FireflyIII\Models\TransactionJournal;
 use FireflyIII\Models\TransactionJournalMeta;
+use FireflyIII\Models\TransactionType;
 use FireflyIII\Repositories\TransactionGroup\TransactionGroupRepositoryInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Safe\Exceptions\JsonException;
+
 use function Safe\json_encode;
 
 class MonobankImportService
@@ -25,6 +27,7 @@ class MonobankImportService
     private const int INITIAL_LOOKBACK_SECONDS = 2_678_400;
     private const int SYNC_LOOKBACK_BUFFER_SECONDS = 3_600;
     private const int ACCOUNT_REQUEST_DELAY_MS = 1200;
+    private const int INTERNAL_TRANSFER_MAX_TIME_DIFF_SECONDS = 120;
 
     public function __construct(
         private readonly MonobankClient $client,
@@ -66,6 +69,8 @@ class MonobankImportService
             ;
 
             $polledAccountCount = 0;
+            /** @var array<int, array{mapping: BankConnectionAccount, statements: array<int, array>}> $statementsByMapping */
+            $statementsByMapping = [];
             foreach ($accounts as $mapping) {
                 ++$stats['accounts_considered'];
                 if (null === $mapping->firefly_account_id || false === $mapping->enabled) {
@@ -78,7 +83,24 @@ class MonobankImportService
                 }
                 ++$stats['accounts_polled'];
                 ++$polledAccountCount;
-                $this->syncMappedAccount($connection, $mapping, $stats);
+
+                $fromTimestamp = $this->fromTimestamp($mapping);
+                $toTimestamp   = now()->timestamp;
+                $statements    = $this->client->getStatements((string) $connection->access_token, $mapping->mono_account_id, $fromTimestamp, $toTimestamp);
+                usort($statements, static fn (array $a, array $b): int => ((int) ($a['time'] ?? 0)) <=> ((int) ($b['time'] ?? 0)));
+                $statementsByMapping[(int) $mapping->id] = ['mapping' => $mapping, 'statements' => $statements];
+            }
+
+            $consumedExternalIds = [];
+            foreach ($statementsByMapping as $entry) {
+                $this->syncMappedAccount(
+                    $connection,
+                    $entry['mapping'],
+                    $entry['statements'],
+                    $statementsByMapping,
+                    $consumedExternalIds,
+                    $stats
+                );
             }
 
             $run->status      = 'success';
@@ -111,22 +133,24 @@ class MonobankImportService
     }
 
     /**
-     * @param array<string, int> $stats
+     * @param array<string, int>                                                  $stats
+     * @param array<int, array{mapping: BankConnectionAccount, statements: array<int, array>}> $statementsByMapping
+     * @param array<string, bool>                                                 $consumedExternalIds
      *
      * @throws FireflyException
      * @throws JsonException
      * @throws MonobankException
      */
-    private function syncMappedAccount(BankConnection $connection, BankConnectionAccount $mapping, array &$stats): void
-    {
-        $fromTimestamp = $this->fromTimestamp($mapping);
-        $toTimestamp   = now()->timestamp;
-        $statements    = $this->client->getStatements((string) $connection->access_token, $mapping->mono_account_id, $fromTimestamp, $toTimestamp);
-
-        usort($statements, static fn (array $a, array $b): int => ((int) ($a['time'] ?? 0)) <=> ((int) ($b['time'] ?? 0)));
-
-        $lastSeenId        = $mapping->last_seen_statement_id;
-        $lastSyncedTime    = $mapping->last_synced_statement_ts;
+    private function syncMappedAccount(
+        BankConnection $connection,
+        BankConnectionAccount $mapping,
+        array $statements,
+        array $statementsByMapping,
+        array &$consumedExternalIds,
+        array &$stats
+    ): void {
+        $lastSeenId     = $mapping->last_seen_statement_id;
+        $lastSyncedTime = $mapping->last_synced_statement_ts;
 
         foreach ($statements as $statement) {
             if ($this->isBeforeFirstImportStart($mapping, (int) ($statement['time'] ?? 0))) {
@@ -138,26 +162,48 @@ class MonobankImportService
                 ++$stats['skipped'];
                 continue;
             }
+            if (true === ($consumedExternalIds[$externalId] ?? false)) {
+                ++$stats['duplicates'];
+                $lastSeenId     = (string) ($statement['id'] ?? $lastSeenId);
+                $lastSyncedTime = max((int) $lastSyncedTime, (int) ($statement['time'] ?? 0));
+                continue;
+            }
             if ($this->hasImportedStatement($connection, $externalId)) {
                 ++$stats['duplicates'];
-                $lastSeenId = (string) ($statement['id'] ?? $lastSeenId);
+                $lastSeenId     = (string) ($statement['id'] ?? $lastSeenId);
                 $lastSyncedTime = max((int) $lastSyncedTime, (int) ($statement['time'] ?? 0));
                 continue;
             }
 
-            $mapped = $this->transactionMapper->mapStatement($mapping, $statement);
+            $counterExternalId = null;
+            $mapped            = null;
+            $pair              = $this->findInternalTransferPair($mapping, $statement, $statementsByMapping, $consumedExternalIds);
+            if (is_array($pair)) {
+                /** @var BankConnectionAccount $counterparty */
+                $counterparty      = $pair['mapping'];
+                $counterExternalId = $pair['external_id'];
+                $mapped            = $this->transactionMapper->mapInternalTransfer($mapping, $counterparty, $statement);
+            }
+            if (null === $mapped) {
+                $mapped = $this->transactionMapper->mapStatement($mapping, $statement);
+            }
             if (null === $mapped) {
                 ++$stats['skipped'];
                 continue;
             }
             if ($this->matchesExistingJournal($connection, $mapped['transactions'][0] ?? [])) {
                 ++$stats['duplicates'];
-                $lastSeenId = (string) ($statement['id'] ?? $lastSeenId);
+                $lastSeenId     = (string) ($statement['id'] ?? $lastSeenId);
                 $lastSyncedTime = max((int) $lastSyncedTime, (int) ($statement['time'] ?? 0));
                 continue;
             }
 
-            $this->transactionGroupRepository->store($mapped);
+            /** @var TransactionGroup $group */
+            $group = $this->transactionGroupRepository->store($mapped);
+            if (null !== $counterExternalId) {
+                $this->storePairExternalId($group, $counterExternalId);
+                $consumedExternalIds[$counterExternalId] = true;
+            }
             ++$stats['imported'];
 
             $lastSeenId     = (string) ($statement['id'] ?? $lastSeenId);
@@ -203,7 +249,7 @@ class MonobankImportService
         $encoded = json_encode($externalId);
 
         return TransactionJournalMeta::query()
-            ->where('name', 'external_id')
+            ->whereIn('name', ['external_id', 'monobank_pair_external_id'])
             ->where('hash', hash('sha256', $encoded))
             ->where('data', $encoded)
             ->whereHas('transactionJournal', static function ($query) use ($connection): void {
@@ -211,6 +257,114 @@ class MonobankImportService
             })
             ->exists()
         ;
+    }
+
+    /**
+     * @param array<int, array{mapping: BankConnectionAccount, statements: array<int, array>}> $statementsByMapping
+     * @param array<string, bool>                                                                $consumedExternalIds
+     *
+     * @return null|array{mapping: BankConnectionAccount, external_id: string}
+     */
+    private function findInternalTransferPair(
+        BankConnectionAccount $mapping,
+        array $statement,
+        array $statementsByMapping,
+        array $consumedExternalIds
+    ): ?array {
+        if (!$this->isPotentialInternalTransfer($statement)) {
+            return null;
+        }
+
+        $amount      = (int) ($statement['amount'] ?? 0);
+        $operation   = (int) ($statement['operationAmount'] ?? $amount);
+        $statementTs = (int) ($statement['time'] ?? 0);
+        if (0 === $amount || 0 === $statementTs) {
+            return null;
+        }
+
+        foreach ($statementsByMapping as $entry) {
+            $counterMapping = $entry['mapping'];
+            if ((int) $counterMapping->id === (int) $mapping->id || null === $counterMapping->firefly_account_id || false === $counterMapping->enabled) {
+                continue;
+            }
+
+            foreach ($entry['statements'] as $counterStatement) {
+                if (!$this->isPotentialInternalTransfer($counterStatement)) {
+                    continue;
+                }
+
+                $counterTs = (int) ($counterStatement['time'] ?? 0);
+                if ($counterTs <= 0 || abs($statementTs - $counterTs) > self::INTERNAL_TRANSFER_MAX_TIME_DIFF_SECONDS) {
+                    continue;
+                }
+
+                $counterExternalId = $this->transactionMapper->externalId($counterMapping, $counterStatement);
+                if (null === $counterExternalId || true === ($consumedExternalIds[$counterExternalId] ?? false)) {
+                    continue;
+                }
+
+                $counterAmount    = (int) ($counterStatement['amount'] ?? 0);
+                $counterOperation = (int) ($counterStatement['operationAmount'] ?? $counterAmount);
+                $mirrors          = ($counterAmount === -$operation && $counterOperation === -$amount)
+                    || ($counterAmount === -$amount);
+                if (!$mirrors) {
+                    continue;
+                }
+
+                return ['mapping' => $counterMapping, 'external_id' => $counterExternalId];
+            }
+        }
+
+        return null;
+    }
+
+    private function isPotentialInternalTransfer(array $statement): bool
+    {
+        $mcc = (int) ($statement['mcc'] ?? $statement['originalMcc'] ?? 0);
+        if (4829 !== $mcc) {
+            return false;
+        }
+
+        $description = mb_strtolower(trim((string) ($statement['description'] ?? '')));
+        if ('' === $description) {
+            return false;
+        }
+
+        if (str_starts_with($description, 'переказ')) {
+            return true;
+        }
+
+        return str_starts_with($description, 'з ') && str_contains($description, 'картк');
+    }
+
+    private function storePairExternalId(TransactionGroup $group, string $externalId): void
+    {
+        $externalId = trim($externalId);
+        if ('' === $externalId) {
+            return;
+        }
+
+        /** @var null|TransactionJournal $journal */
+        $journal = $group->transactionJournals()->first();
+        if (!$journal instanceof TransactionJournal) {
+            return;
+        }
+
+        $exists = TransactionJournalMeta::query()
+            ->where('transaction_journal_id', $journal->id)
+            ->where('name', 'monobank_pair_external_id')
+            ->where('hash', hash('sha256', json_encode($externalId)))
+            ->exists()
+        ;
+        if ($exists) {
+            return;
+        }
+
+        $meta = new TransactionJournalMeta();
+        $meta->transaction_journal_id = $journal->id;
+        $meta->name = 'monobank_pair_external_id';
+        $meta->data = $externalId;
+        $meta->save();
     }
 
     private function matchesExistingJournal(BankConnection $connection, array $transaction): bool
