@@ -66,6 +66,12 @@
                     <span>{{ 'transfers'|_ }}</span>
                 </a>
             </li>
+            <li class="{{ activeRouteStrict('transactions.imported.deleted') }}">
+                <a href="{{ route('transactions.imported.deleted') }}">
+                    <span class="fa fa-angle-right fa-fw"></span>
+                    <span>{{ 'deleted_imported_transactions'|_ }}</span>
+                </a>
+            </li>
         </ul>
     </li>
 

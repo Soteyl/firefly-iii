@@ -1342,6 +1342,10 @@ Route::group(
 
         Route::get('show/{transactionGroup?}', ['uses' => 'Transaction\ShowController@show', 'as' => 'show']);
         Route::get('debug/{transactionGroup}', ['uses' => 'Transaction\ShowController@debugShow', 'as' => 'debug']);
+
+        // deleted imported transactions
+        Route::get('imported/deleted', ['uses' => 'Transaction\ImportedController@deleted', 'as' => 'imported.deleted']);
+        Route::post('imported/deleted/restore/{journalId}', ['uses' => 'Transaction\ImportedController@restore', 'as' => 'imported.restore']);
     }
 );
 
