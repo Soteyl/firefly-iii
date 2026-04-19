@@ -147,6 +147,7 @@ return [
     'telegram_assistant' => [
         'shared_secret' => env('TELEGRAM_ASSISTANT_SHARED_SECRET', ''),
         'firefly_base_url' => env('TELEGRAM_ASSISTANT_FIREFLY_BASE_URL', 'http://app:8080'),
+        'oauth_authorize_url' => env('TELEGRAM_ASSISTANT_OPENAI_OAUTH_AUTHORIZE_URL', ''),
         'default_model' => env('TELEGRAM_ASSISTANT_DEFAULT_MODEL', 'gpt-5-mini'),
         'models' => [
             'gpt-5' => 'GPT-5',

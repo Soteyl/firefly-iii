@@ -76,27 +76,17 @@
                         <h4>{{ 'telegram_assistant_oauth'|_ }}</h4>
                         <p class="text-muted">{{ 'telegram_assistant_oauth_help'|_ }}</p>
                         <div class="form-group">
-                            <label for="openai_oauth_auth_url">{{ 'telegram_assistant_oauth_authorize_url'|_ }}</label>
+                            <label for="openai_oauth_result_url">{{ 'telegram_assistant_oauth_result_url'|_ }}</label>
                             <input
                                 type="url"
                                 class="form-control"
-                                id="openai_oauth_auth_url"
-                                name="openai_oauth_auth_url"
-                                value="{{ old('openai_oauth_auth_url', telegramAssistant.openai_oauth_auth_url|default('')) }}"
-                                placeholder="https://.../authorize?client_id=..."
-                            >
-                        </div>
-                        <div class="form-group">
-                            <label for="openai_oauth_redirect_hint">{{ 'telegram_assistant_oauth_redirect_hint'|_ }}</label>
-                            <input
-                                type="url"
-                                class="form-control"
-                                id="openai_oauth_redirect_hint"
-                                name="openai_oauth_redirect_hint"
-                                value="{{ old('openai_oauth_redirect_hint', telegramAssistant.openai_oauth_redirect_hint|default('')) }}"
-                                placeholder="{{ telegramAssistantOauthCallbackUrl }}"
+                                id="openai_oauth_result_url"
+                                name="openai_oauth_result_url"
+                                value="{{ old('openai_oauth_result_url') }}"
+                                placeholder="https://.../callback?state=...&api_key=..."
                             >
                             <small class="text-muted">
+                                {{ 'telegram_assistant_oauth_result_url_help'|_ }}<br>
                                 {{ 'telegram_assistant_oauth_callback_url'|_ }}: <code>{{ telegramAssistantOauthCallbackUrl }}</code>
                             </small>
                         </div>
