@@ -25,23 +25,18 @@ declare(strict_types=1);
 namespace FireflyIII\Http\Controllers\Profile;
 
 use FireflyIII\Http\Controllers\Controller;
-use FireflyIII\User;
 use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Contracts\View\Factory;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\View\View;
 use Laravel\Passport\Client;
 use Laravel\Passport\ClientRepository;
 use Laravel\Passport\Token;
-use RuntimeException;
 use SensitiveParameter;
 
 final class OAuthController extends Controller
@@ -68,7 +63,7 @@ final class OAuthController extends Controller
     public function destroyClient(Request $request, string $clientId): Response
     {
         /** @var null|Client $client */
-        $client = $this->userClientsQuery()->where('revoked', false)->find($clientId);
+        $client = auth()->user()->oauthApps()->where('revoked', false)->find($clientId);
 
         if (null === $client) {
             return new Response('', 404);
@@ -106,21 +101,12 @@ final class OAuthController extends Controller
      */
     public function index()
     {
-        try {
-            $count = $this->personalAccessClientCount();
+        $count = DB::table('oauth_clients')->where('grant_types', '["personal_access"]')->whereNull('owner_id')->count();
 
-            if (0 === $count) {
-                /** @var ClientRepository $repository */
-                $repository = app(ClientRepository::class);
-                if (method_exists($repository, 'createPersonalAccessGrantClient')) {
-                    $repository->createPersonalAccessGrantClient('Firefly III Personal Access Grant Client', null);
-                }
-                if (method_exists($repository, 'createPersonalAccessClient')) {
-                    $repository->createPersonalAccessClient(null, 'Firefly III Personal Access Grant Client', 'http://localhost');
-                }
-            }
-        } catch (QueryException|RuntimeException $e) {
-            Log::warning(sprintf('Unable to auto-create personal access OAuth client: %s', $e->getMessage()));
+        if (0 === $count) {
+            /** @var ClientRepository $repository */
+            $repository = app(ClientRepository::class);
+            $repository->createPersonalAccessGrantClient('Firefly III Personal Access Grant Client', null);
         }
         $link  = route('index');
 
@@ -131,7 +117,7 @@ final class OAuthController extends Controller
     {
         Log::debug('Now in listClients()');
         // Retrieving all the OAuth app clients that belong to the user...
-        $clients = $this->userClientsQuery()->where('revoked', false)->get();
+        $clients = auth()->user()->oauthApps()->where('revoked', false)->get();
         $array   = [];
 
         /** @var Client $client */
@@ -162,7 +148,7 @@ final class OAuthController extends Controller
 
     public function regenerateClientSecret(Request $request, string $clientId): JsonResponse|Response
     {
-        $client             = $this->userClientsQuery()->where('revoked', false)->find($clientId);
+        $client             = auth()->user()->oauthApps()->where('revoked', false)->find($clientId);
         if (null === $client) {
             return new Response('', 404);
         }
@@ -183,25 +169,12 @@ final class OAuthController extends Controller
         ])->validate();
 
         // Creating an OAuth app client that belongs to the given user...
-        $repository = app(ClientRepository::class);
-        if (method_exists($repository, 'createAuthorizationCodeGrantClient')) {
-            $client = $repository->createAuthorizationCodeGrantClient(
-                name: $request->input('name'),
-                redirectUris: [$request->input('redirect_uris')],
-                confidential: $request->input('confidential'),
-                user: auth()->user()
-            );
-        } else {
-            $client = $repository->create(
-                auth()->id(),
-                (string) $request->input('name'),
-                (string) $request->input('redirect_uris'),
-                null,
-                false,
-                false,
-                (bool) $request->input('confidential', true)
-            );
-        }
+        $client             = app(ClientRepository::class)->createAuthorizationCodeGrantClient(
+            name: $request->input('name'),
+            redirectUris: [$request->input('redirect_uris')],
+            confidential: $request->input('confidential'),
+            user: auth()->user()
+        );
         $arr                = $client->toArray();
         $arr['plainSecret'] = $client->plainSecret;
 
@@ -219,7 +192,7 @@ final class OAuthController extends Controller
 
     public function updateClient(Request $request, string $clientId): Client|Response
     {
-        $client = $this->userClientsQuery()->where('revoked', false)->find($clientId);
+        $client = auth()->user()->oauthApps()->where('revoked', false)->find($clientId);
 
         if (null === $client) {
             return new Response('', 404);
@@ -233,40 +206,5 @@ final class OAuthController extends Controller
         $this->clients->update($client, $request->input('name'), explode(',', $request->input('redirect_uris'))); // FIXME replace
 
         return $client;
-    }
-
-    private function personalAccessClientCount(): int
-    {
-        if (!Schema::hasTable('oauth_clients')) {
-            return 0;
-        }
-        if (Schema::hasColumn('oauth_clients', 'personal_access_client')) {
-            return DB::table('oauth_clients')->where('personal_access_client', true)->count();
-        }
-        if (Schema::hasColumn('oauth_clients', 'grant_types')) {
-            $query = DB::table('oauth_clients')->where('grant_types', '["personal_access"]');
-            if (Schema::hasColumn('oauth_clients', 'owner_id')) {
-                $query->whereNull('owner_id');
-            }
-
-            return $query->count();
-        }
-
-        return 0;
-    }
-
-    private function userClientsQuery(): Builder
-    {
-        /** @var User $user */
-        $user  = auth()->user();
-        $query = Client::query();
-        if (Schema::hasColumn('oauth_clients', 'user_id')) {
-            return $query->where('user_id', (int) $user->id);
-        }
-        if (Schema::hasColumn('oauth_clients', 'owner_type') && Schema::hasColumn('oauth_clients', 'owner_id')) {
-            return $query->where('owner_type', User::class)->where('owner_id', (int) $user->id);
-        }
-
-        return $query->whereRaw('1=0');
     }
 }
