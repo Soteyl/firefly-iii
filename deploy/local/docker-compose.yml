@@ -88,16 +88,31 @@ services:
       - app
 
   firefly_mcp:
-    image: node:22-alpine
+    build:
+      context: ./firefly-mcp
+      dockerfile: Dockerfile
     container_name: firefly_mcp
     restart: always
     env_file: .env
     command:
       [
-        "sh",
-        "-c",
-        "npm install -g @firefly-iii-mcp/server@latest && firefly-iii-mcp-server --pat \"$FIREFLY_MCP_PAT\" --baseUrl \"$TELEGRAM_ASSISTANT_FIREFLY_BASE_URL\" --port 3010 --preset full --logLevel warn",
+        "firefly-iii-mcp-server",
+        "--pat",
+        "${FIREFLY_MCP_PAT}",
+        "--baseUrl",
+        "${TELEGRAM_ASSISTANT_FIREFLY_BASE_URL}",
+        "--port",
+        "3010",
+        "--preset",
+        "full",
+        "--logLevel",
+        "warn",
       ]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 3010"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     networks:
       - firefly_iii
     ports:
@@ -121,8 +136,10 @@ services:
     networks:
       - firefly_iii
     depends_on:
-      - app
-      - firefly_mcp
+      app:
+        condition: service_started
+      firefly_mcp:
+        condition: service_healthy
 
 volumes:
   firefly_iii_upload:

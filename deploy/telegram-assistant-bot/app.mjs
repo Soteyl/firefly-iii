@@ -11,6 +11,9 @@ const MAX_TOOL_TURNS = Number.parseInt(process.env.TELEGRAM_ASSISTANT_MAX_TOOL_T
 const MAX_USER_INPUT = 4000;
 const MAX_CHAT_HISTORY_MESSAGES = Number.parseInt(process.env.TELEGRAM_ASSISTANT_CHAT_HISTORY || '12', 10);
 const CHAT_HISTORY_TTL_MS = Number.parseInt(process.env.TELEGRAM_ASSISTANT_CHAT_TTL_MS || String(45 * 60 * 1000), 10);
+const HTTP_TIMEOUT_MS = Number.parseInt(process.env.TELEGRAM_ASSISTANT_HTTP_TIMEOUT_MS || '25000', 10);
+const HTTP_RETRIES = Number.parseInt(process.env.TELEGRAM_ASSISTANT_HTTP_RETRIES || '3', 10);
+const HTTP_RETRY_BASE_MS = Number.parseInt(process.env.TELEGRAM_ASSISTANT_HTTP_RETRY_BASE_MS || '600', 10);
 
 if (!TELEGRAM_BOT_TOKEN) {
   throw new Error('TELEGRAM_BOT_TOKEN is required');
@@ -60,25 +63,68 @@ function appendChatHistory(chatId, role, content) {
 }
 
 async function httpJson(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json, text/event-stream',
-      ...(options.headers || {}),
-    },
-  });
-  const bodyText = await response.text();
-  let body;
-  try {
-    body = bodyText ? JSON.parse(bodyText) : {};
-  } catch {
-    body = parseSsePayload(bodyText);
+  const { timeoutMs, ...fetchOptions } = options;
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  const requestTimeoutMs = Number.isFinite(Number(timeoutMs))
+    ? Number(timeoutMs)
+    : Math.max(1000, HTTP_TIMEOUT_MS);
+  const headers = {
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+    ...(fetchOptions.headers || {}),
+  };
+  let lastError;
+  const safeUrl = sanitizeUrlForLog(url);
+
+  for (let attempt = 1; attempt <= Math.max(1, HTTP_RETRIES); attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+      const response = await fetch(url, {
+        ...fetchOptions,
+        method,
+        headers,
+        signal: controller.signal,
+      });
+
+      const bodyText = await response.text();
+      let body;
+      try {
+        body = bodyText ? JSON.parse(bodyText) : {};
+      } catch {
+        body = parseSsePayload(bodyText);
+      }
+
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}: ${JSON.stringify(body)}`);
+        if (response.status >= 500 && attempt < HTTP_RETRIES) {
+          lastError = error;
+        } else {
+          throw error;
+        }
+      } else {
+        clearTimeout(timeout);
+        return { body, headers: response.headers };
+      }
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (attempt < HTTP_RETRIES) {
+      const delayMs = HTTP_RETRY_BASE_MS * attempt;
+      console.warn('[http-retry]', method, safeUrl, `attempt=${attempt}/${HTTP_RETRIES}`, `delay_ms=${delayMs}`, String(lastError?.message || lastError || 'unknown'));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   }
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${JSON.stringify(body)}`);
-  }
-  return { body, headers: response.headers };
+
+  const msg = lastError instanceof Error ? lastError.message : String(lastError || 'unknown fetch error');
+  throw new Error(`Fetch failed after retries (${method} ${safeUrl}): ${msg}`);
+}
+
+function sanitizeUrlForLog(url) {
+  return String(url || '').replace(/(https:\/\/api\.telegram\.org\/bot)[^/]+/i, '$1<redacted>');
 }
 
 function parseSsePayload(bodyText) {
@@ -110,8 +156,12 @@ function parseSsePayload(bodyText) {
 }
 
 async function telegram(method, payload) {
+  const pollTimeoutMs = method === 'getUpdates'
+    ? Math.max(HTTP_TIMEOUT_MS, (POLL_TIMEOUT_SECONDS + 15) * 1000)
+    : HTTP_TIMEOUT_MS;
   const { body } = await httpJson(`${TELEGRAM_API}/${method}`, {
     method: 'POST',
+    timeoutMs: pollTimeoutMs,
     body: JSON.stringify(payload),
   });
   if (!body.ok) {
@@ -574,6 +624,7 @@ async function runAssistant(config, userInput, historyMessages = []) {
     ];
 
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
+      console.log('[assistant-turn]', `turn=${turn + 1}`, `model=${config.openai_model}`);
       const completion = await openAiChatCompletion(config.openai_api_token, config.openai_model, messages, openAiTools);
       const choice = completion?.choices?.[0]?.message;
       if (!choice) {
@@ -611,12 +662,14 @@ async function runAssistant(config, userInput, historyMessages = []) {
           toolResult = { error: `Tool '${toolName}' is not allowed.` };
         } else {
           try {
+            console.log('[tool-call]', toolName, safeStringify(toolArgs).slice(0, 500));
             toolResult = await mcp.request('tools/call', {
               name: toolName,
               arguments: toolArgs,
             });
           } catch (error) {
             toolResult = { error: error instanceof Error ? error.message : String(error) };
+            console.error('[tool-call-error]', toolName, toolResult.error);
           }
         }
 
@@ -665,6 +718,7 @@ async function handleUpdate(update) {
 
   const userInput = text.slice(0, MAX_USER_INPUT);
   await telegram('sendChatAction', { chat_id: chat.id, action: 'typing' });
+  console.log('[message]', `chat=${chat.id}`, `user=${from.id}`, userInput.slice(0, 300));
 
   const history = getChatHistory(chat.id);
   const output = await runAssistant(config, userInput, history);
@@ -688,6 +742,7 @@ async function pollLoop() {
           await handleUpdate(update);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          console.error('[update-error]', message, error instanceof Error && error.stack ? error.stack : '');
           const chatId = update?.message?.chat?.id;
           if (chatId) {
             await sendMessage(chatId, `Request failed: ${message.slice(0, 700)}`);
