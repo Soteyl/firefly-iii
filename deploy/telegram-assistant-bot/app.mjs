@@ -996,6 +996,43 @@ function inferDateRangeFromText(userInput) {
 
 function normalizeToolArgsWithDefaults(toolName, toolArgs, toolSchema, userInput) {
   const args = (toolArgs && typeof toolArgs === 'object') ? { ...toolArgs } : {};
+  const schemaProps = (toolSchema?.properties && typeof toolSchema.properties === 'object')
+    ? toolSchema.properties
+    : {};
+  const requiredProps = Array.isArray(toolSchema?.required) ? toolSchema.required : [];
+
+  // Auto-wrap flat model arguments into requestBody when schema requires it.
+  if (requiredProps.includes('requestBody') && (typeof args.requestBody !== 'object' || args.requestBody == null)) {
+    const topLevelPropNames = new Set(Object.keys(schemaProps).filter((name) => name !== 'requestBody'));
+    const requestBodySchema = (schemaProps.requestBody && typeof schemaProps.requestBody === 'object')
+      ? schemaProps.requestBody
+      : {};
+    const requestBodyPropNames = new Set(
+      Object.keys(
+        requestBodySchema?.properties && typeof requestBodySchema.properties === 'object'
+          ? requestBodySchema.properties
+          : {},
+      ),
+    );
+
+    const requestBody = {};
+    for (const [key, value] of Object.entries(args)) {
+      if (key === 'requestBody') {
+        continue;
+      }
+      const shouldMoveToBody = !topLevelPropNames.has(key) || requestBodyPropNames.has(key);
+      if (shouldMoveToBody) {
+        requestBody[key] = value;
+        delete args[key];
+      }
+    }
+
+    if (Object.keys(requestBody).length > 0) {
+      args.requestBody = requestBody;
+      console.log('[tool-call-autowrap-requestBody]', toolName, Object.keys(requestBody).join(','));
+    }
+  }
+
   const requiresStart = Array.isArray(toolSchema?.required) && toolSchema.required.includes('start');
   const requiresEnd = Array.isArray(toolSchema?.required) && toolSchema.required.includes('end');
   if (!requiresStart && !requiresEnd) {
