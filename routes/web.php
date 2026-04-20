@@ -856,6 +856,7 @@ Route::group(
         Route::post('bank-connections/{id}/validate-token', ['uses' => 'BankConnectionController@validateToken', 'as' => 'bank-connections.validate-token']);
         Route::post('bank-connections/{id}/refresh-accounts', ['uses' => 'BankConnectionController@refreshAccounts', 'as' => 'bank-connections.refresh-accounts']);
         Route::post('bank-connections/{id}/sync', ['uses' => 'BankConnectionController@sync', 'as' => 'bank-connections.sync']);
+        Route::get('bank-connections/sync-status', ['uses' => 'BankConnectionController@syncStatus', 'as' => 'bank-connections.sync-status']);
         Route::post('bank-connections/{id}/revolut/validate-token', ['uses' => 'BankConnectionController@validateRevolutToken', 'as' => 'bank-connections.revolut.validate-token']);
         Route::post('bank-connections/{id}/revolut/refresh-accounts', ['uses' => 'BankConnectionController@refreshRevolutAccounts', 'as' => 'bank-connections.revolut.refresh-accounts']);
         Route::post('bank-connections/{id}/revolut/sync', ['uses' => 'BankConnectionController@syncRevolut', 'as' => 'bank-connections.revolut.sync']);

@@ -244,10 +244,24 @@
                     {% endif %}
 
                     {% for connection in connections %}
-                        <div class="panel panel-default">
+                        {% set syncMeta = connectionSyncMeta[connection.id]|default({
+                            status: 'idle',
+                            active: false,
+                            progress_percent: 0,
+                            progress_done: 0,
+                            progress_total: 0,
+                            stage: '',
+                            imported: 0,
+                            last_finished_at: null,
+                            last_error: ''
+                        }) %}
+                        <div class="panel panel-default js-bank-connection" data-connection-id="{{ connection.id }}">
                             <div class="panel-heading">
                                 <strong>{{ connection.provider|capitalize }}</strong>
                                 <span class="label label-default">{{ connection.status }}</span>
+                                <span class="label js-sync-run-status {% if syncMeta.status == 'failed' %}label-danger{% elseif syncMeta.active %}label-info{% else %}label-default{% endif %}">
+                                    {{ syncMeta.status }}
+                                </span>
                             </div>
                             <div class="panel-body">
                                 <p>
@@ -282,7 +296,7 @@
                                         </form>
                                         <form method="POST" action="{{ route('preferences.bank-connections.revolut.sync', connection.id) }}" style="display:inline;">
                                             <input name="_token" type="hidden" value="{{ csrf_token() }}">
-                                            <button type="submit" class="btn btn-primary">{{ 'sync_now'|_ }}</button>
+                                            <button type="submit" class="btn btn-primary js-sync-button" {% if syncMeta.active %}disabled{% endif %}>{{ syncMeta.active ? 'sync_in_progress'|_ : 'sync_now'|_ }}</button>
                                         </form>
                                     {% else %}
                                         <form method="POST" action="{{ route('preferences.bank-connections.validate-token', connection.id) }}" style="display:inline;">
@@ -295,10 +309,35 @@
                                         </form>
                                         <form method="POST" action="{{ route('preferences.bank-connections.sync', connection.id) }}" style="display:inline;">
                                             <input name="_token" type="hidden" value="{{ csrf_token() }}">
-                                            <button type="submit" class="btn btn-primary">{{ 'sync_now'|_ }}</button>
+                                            <button type="submit" class="btn btn-primary js-sync-button" {% if syncMeta.active %}disabled{% endif %}>{{ syncMeta.active ? 'sync_in_progress'|_ : 'sync_now'|_ }}</button>
                                         </form>
                                     {% endif %}
                                 </div>
+                                <div class="js-sync-progress-wrap" style="margin-top:10px;{% if not syncMeta.active %} display:none;{% endif %}">
+                                    <div class="progress" style="margin-bottom:6px;">
+                                        <div
+                                            class="progress-bar progress-bar-striped active js-sync-progress-bar"
+                                            role="progressbar"
+                                            aria-valuenow="{{ syncMeta.progress_percent }}"
+                                            aria-valuemin="0"
+                                            aria-valuemax="100"
+                                            style="min-width:32px;width: {{ syncMeta.progress_percent }}%;"
+                                        >
+                                            <span class="js-sync-progress-percent">{{ syncMeta.progress_percent }}%</span>
+                                        </div>
+                                    </div>
+                                    <small class="text-muted js-sync-progress-text">
+                                        {{ syncMeta.progress_done }}/{{ syncMeta.progress_total }} · {{ syncMeta.stage|default('') }}
+                                    </small>
+                                </div>
+                                <p class="text-muted js-sync-last-result" style="margin-top:8px;{% if syncMeta.last_finished_at is empty %} display:none;{% endif %}">
+                                    {{ 'last_sync_imported'|_ }}:
+                                    <span class="js-sync-last-imported">{{ syncMeta.imported }}</span>
+                                    <span class="js-sync-last-finished">({{ syncMeta.last_finished_at }})</span>
+                                </p>
+                                <p class="text-danger js-sync-last-error" style="{% if syncMeta.status != 'failed' %}display:none;{% endif %}">
+                                    {{ syncMeta.last_error }}
+                                </p>
 
                                 <hr>
                                 <h4>{{ connection.provider == 'revolut' ? 'revolut_accounts'|_ : 'monobank_accounts'|_ }}</h4>
@@ -392,4 +431,136 @@
             </div>
         </div>
     </div>
+{% endblock %}
+
+{% block scripts %}
+    <script nonce="{{ JS_NONCE }}">
+        (function () {
+            var pollUrl = '{{ route('preferences.bank-connections.sync-status') }}';
+            var pollTimer = null;
+
+            function badgeClass(status, active) {
+                if (status === 'failed') {
+                    return 'label-danger';
+                }
+                if (active) {
+                    return 'label-info';
+                }
+                return 'label-default';
+            }
+
+            function setButtonState(panel, active) {
+                var button = panel.querySelector('.js-sync-button');
+                if (!button) {
+                    return;
+                }
+                button.disabled = !!active;
+                button.textContent = active ? '{{ 'sync_in_progress'|_ }}' : '{{ 'sync_now'|_ }}';
+            }
+
+            function updatePanel(panel, meta) {
+                var status = (meta && meta.status) ? String(meta.status) : 'idle';
+                var active = !!(meta && meta.active);
+                var percent = Math.max(0, Math.min(100, Number(meta && meta.progress_percent ? meta.progress_percent : 0)));
+                var done = Number(meta && meta.progress_done ? meta.progress_done : 0);
+                var total = Number(meta && meta.progress_total ? meta.progress_total : 0);
+                var stage = (meta && meta.stage) ? String(meta.stage) : '';
+                var imported = Number(meta && meta.imported ? meta.imported : 0);
+                var finished = (meta && meta.last_finished_at) ? String(meta.last_finished_at) : '';
+                var lastError = (meta && meta.last_error) ? String(meta.last_error) : '';
+
+                setButtonState(panel, active);
+
+                var statusBadge = panel.querySelector('.js-sync-run-status');
+                if (statusBadge) {
+                    statusBadge.className = 'label js-sync-run-status ' + badgeClass(status, active);
+                    statusBadge.textContent = status;
+                }
+
+                var progressWrap = panel.querySelector('.js-sync-progress-wrap');
+                if (progressWrap) {
+                    progressWrap.style.display = active ? '' : 'none';
+                }
+                var progressBar = panel.querySelector('.js-sync-progress-bar');
+                if (progressBar) {
+                    progressBar.style.width = percent + '%';
+                    progressBar.setAttribute('aria-valuenow', String(percent));
+                }
+                var progressPercent = panel.querySelector('.js-sync-progress-percent');
+                if (progressPercent) {
+                    progressPercent.textContent = percent + '%';
+                }
+                var progressText = panel.querySelector('.js-sync-progress-text');
+                if (progressText) {
+                    progressText.textContent = done + '/' + total + (stage ? ' · ' + stage : '');
+                }
+
+                var lastResult = panel.querySelector('.js-sync-last-result');
+                var lastImported = panel.querySelector('.js-sync-last-imported');
+                var lastFinished = panel.querySelector('.js-sync-last-finished');
+                if (lastResult && lastImported && lastFinished) {
+                    var showResult = finished !== '';
+                    lastResult.style.display = showResult ? '' : 'none';
+                    lastImported.textContent = String(imported);
+                    lastFinished.textContent = finished ? '(' + finished + ')' : '';
+                }
+
+                var errorNode = panel.querySelector('.js-sync-last-error');
+                if (errorNode) {
+                    var showError = status === 'failed' && lastError !== '';
+                    errorNode.style.display = showError ? '' : 'none';
+                    errorNode.textContent = lastError;
+                }
+            }
+
+            function hasActivePanels() {
+                var panels = document.querySelectorAll('.js-bank-connection');
+                for (var i = 0; i < panels.length; i += 1) {
+                    var button = panels[i].querySelector('.js-sync-button');
+                    if (button && button.disabled) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            function poll() {
+                fetch(pollUrl, {credentials: 'same-origin'})
+                    .then(function (response) {
+                        if (!response.ok) {
+                            throw new Error('sync-status ' + response.status);
+                        }
+                        return response.json();
+                    })
+                    .then(function (payload) {
+                        var map = (payload && payload.connections) ? payload.connections : {};
+                        var panels = document.querySelectorAll('.js-bank-connection');
+                        for (var i = 0; i < panels.length; i += 1) {
+                            var panel = panels[i];
+                            var connectionId = panel.getAttribute('data-connection-id');
+                            if (!connectionId) {
+                                continue;
+                            }
+                            updatePanel(panel, map[connectionId] || map[String(connectionId)] || null);
+                        }
+                    })
+                    .catch(function () {
+                    })
+                    .finally(function () {
+                        if (hasActivePanels()) {
+                            if (pollTimer === null) {
+                                pollTimer = window.setTimeout(function nextTick() {
+                                    pollTimer = null;
+                                    poll();
+                                }, 4000);
+                            }
+                        }
+                    });
+            }
+
+            if (hasActivePanels()) {
+                poll();
+            }
+        }());
+    </script>
 {% endblock %}

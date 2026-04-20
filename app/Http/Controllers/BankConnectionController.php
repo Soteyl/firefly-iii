@@ -6,11 +6,13 @@ namespace FireflyIII\Http\Controllers;
 
 use Carbon\Carbon;
 use FireflyIII\Enums\AccountTypeEnum;
-use FireflyIII\Exceptions\FireflyException;
 use FireflyIII\Exceptions\MonobankException;
 use FireflyIII\Exceptions\RevolutException;
+use FireflyIII\Jobs\SyncMonobankConnection;
+use FireflyIII\Jobs\SyncRevolutConnection;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
+use FireflyIII\Models\BankSyncRun;
 use FireflyIII\Models\Note;
 use FireflyIII\Models\Preference;
 use FireflyIII\Models\TransactionJournal;
@@ -30,7 +32,6 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
-use Safe\Exceptions\JsonException;
 
 use function trans_choice;
 
@@ -63,6 +64,7 @@ final class BankConnectionController extends Controller
         $user = auth()->user();
         $accountRepository->setUser($user);
         $connections = $user->bankConnections()->with(['bankConnectionAccounts.fireflyAccount'])->orderBy('id')->get();
+        $syncMeta = $this->syncMetaForConnections($connections);
         $assetAccounts = $accountRepository->getActiveAccountsByType([
             AccountTypeEnum::ASSET->value,
             AccountTypeEnum::DEFAULT->value,
@@ -73,6 +75,7 @@ final class BankConnectionController extends Controller
 
         return view('preferences.bank-connections', [
             'connections'   => $connections,
+            'connectionSyncMeta' => $syncMeta,
             'assetAccounts' => $assetAccounts,
             'categories'    => $categories,
             'categoryRules' => $categoryRules,
@@ -831,52 +834,78 @@ final class BankConnectionController extends Controller
         ]);
     }
 
-    /**
-     * @throws JsonException
-     */
-    public function sync(int $id, BankSyncService $bankSyncService): RedirectResponse
+    public function sync(int $id): RedirectResponse
     {
         $connection = $this->findConnectionByProvider($id, 'monobank');
-
-        try {
-            $run = $bankSyncService->syncConnection($connection, 'manual');
-        } catch (FireflyException|MonobankException $e) {
-            Log::warning(sprintf('Could not sync Monobank bank connection #%d: %s', $connection->id, $e->getMessage()));
-
-            return redirect()->route('preferences.bank-connections.index')->withErrors(['access_token' => $e->getMessage()]);
+        $activeRun = $this->activeSyncRun($connection);
+        if ($activeRun instanceof BankSyncRun) {
+            return redirect()
+                ->route('preferences.bank-connections.index')
+                ->withErrors(['access_token' => (string) trans('firefly.bank_connection_sync_already_running')])
+            ;
         }
 
-        $stats = is_array($run->stats_json) ? $run->stats_json : [];
-        $count = (int) ($stats['imported'] ?? 0);
+        $run = new BankSyncRun([
+            'bank_connection_id' => $connection->id,
+            'trigger'            => 'manual',
+            'status'             => 'queued',
+            'started_at'         => now(),
+            'stats_json'         => ['progress_total' => 0, 'progress_done' => 0, 'stage' => 'queued'],
+        ]);
+        $run->save();
+        if ('sync' === (string) config('queue.default')) {
+            SyncMonobankConnection::dispatchAfterResponse($connection->id, $run->id);
+        } else {
+            SyncMonobankConnection::dispatch($connection->id, $run->id);
+        }
 
         return redirect()
             ->route('preferences.bank-connections.index')
-            ->with('success', trans_choice('firefly.bank_connection_synced', max(1, $count), ['count' => $count]))
+            ->with('success', (string) trans('firefly.bank_connection_sync_queued'))
         ;
     }
 
-    /**
-     * @throws JsonException
-     */
-    public function syncRevolut(int $id, RevolutSyncService $revolutSyncService): RedirectResponse
+    public function syncRevolut(int $id): RedirectResponse
     {
         $connection = $this->findConnectionByProvider($id, 'revolut');
-
-        try {
-            $run = $revolutSyncService->syncConnection($connection, 'manual');
-        } catch (FireflyException|RevolutException $e) {
-            Log::warning(sprintf('Could not sync Revolut bank connection #%d: %s', $connection->id, $e->getMessage()));
-
-            return redirect()->route('preferences.bank-connections.index')->withErrors(['revolut_access_token' => $e->getMessage()]);
+        $activeRun = $this->activeSyncRun($connection);
+        if ($activeRun instanceof BankSyncRun) {
+            return redirect()
+                ->route('preferences.bank-connections.index')
+                ->withErrors(['revolut_access_token' => (string) trans('firefly.revolut_connection_sync_already_running')])
+            ;
         }
 
-        $stats = is_array($run->stats_json) ? $run->stats_json : [];
-        $count = (int) ($stats['imported'] ?? 0);
+        $run = new BankSyncRun([
+            'bank_connection_id' => $connection->id,
+            'trigger'            => 'manual',
+            'status'             => 'queued',
+            'started_at'         => now(),
+            'stats_json'         => ['progress_total' => 0, 'progress_done' => 0, 'stage' => 'queued'],
+        ]);
+        $run->save();
+        if ('sync' === (string) config('queue.default')) {
+            SyncRevolutConnection::dispatchAfterResponse($connection->id, $run->id);
+        } else {
+            SyncRevolutConnection::dispatch($connection->id, $run->id);
+        }
 
         return redirect()
             ->route('preferences.bank-connections.index')
-            ->with('success', trans_choice('firefly.revolut_connection_synced', max(1, $count), ['count' => $count]))
+            ->with('success', (string) trans('firefly.revolut_connection_sync_queued'))
         ;
+    }
+
+    public function syncStatus(): JsonResponse
+    {
+        /** @var User $user */
+        $user = auth()->user();
+        $connections = $user->bankConnections()->orderBy('id')->get();
+        $meta = $this->syncMetaForConnections($connections);
+
+        return response()->json([
+            'connections' => $meta,
+        ]);
     }
 
     private function findConnection(int $id): BankConnection
@@ -897,6 +926,77 @@ final class BankConnectionController extends Controller
             ->where('provider', $provider)
             ->findOrFail($id)
         ;
+    }
+
+    private function activeSyncRun(BankConnection $connection): ?BankSyncRun
+    {
+        /** @var null|BankSyncRun $run */
+        $run = $connection->bankSyncRuns()
+            ->whereIn('status', ['queued', 'running'])
+            ->orderByDesc('id')
+            ->first()
+        ;
+
+        return $run;
+    }
+
+    /**
+     * @param \Illuminate\Support\Collection<int, BankConnection> $connections
+     *
+     * @return array<int, array{status:string,active:bool,run_id:int|null,progress_percent:int,progress_done:int,progress_total:int,stage:string,imported:int,last_finished_at:string|null,last_error:string}>
+     */
+    private function syncMetaForConnections(\Illuminate\Support\Collection $connections): array
+    {
+        if ($connections->isEmpty()) {
+            return [];
+        }
+        $connectionIds = $connections->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+        $runs = BankSyncRun::query()
+            ->whereIn('bank_connection_id', $connectionIds)
+            ->orderByDesc('id')
+            ->get()
+        ;
+
+        $latestByConnection = [];
+        $latestSuccessByConnection = [];
+        foreach ($runs as $run) {
+            $connectionId = (int) $run->bank_connection_id;
+            if (!array_key_exists($connectionId, $latestByConnection)) {
+                $latestByConnection[$connectionId] = $run;
+            }
+            if ('success' === $run->status && !array_key_exists($connectionId, $latestSuccessByConnection)) {
+                $latestSuccessByConnection[$connectionId] = $run;
+            }
+        }
+
+        $meta = [];
+        foreach ($connectionIds as $connectionId) {
+            /** @var null|BankSyncRun $latest */
+            $latest = $latestByConnection[$connectionId] ?? null;
+            /** @var null|BankSyncRun $latestSuccess */
+            $latestSuccess = $latestSuccessByConnection[$connectionId] ?? null;
+            $stats = is_array($latest?->stats_json) ? $latest->stats_json : [];
+            $status = (string) ($latest?->status ?? 'idle');
+            $progressTotal = max(0, (int) ($stats['progress_total'] ?? 0));
+            $progressDone = max(0, min((int) ($stats['progress_done'] ?? 0), $progressTotal > 0 ? $progressTotal : PHP_INT_MAX));
+            $progressPercent = $progressTotal > 0 ? (int) floor(($progressDone / $progressTotal) * 100) : ('success' === $status ? 100 : 0);
+            $successStats = is_array($latestSuccess?->stats_json) ? $latestSuccess->stats_json : [];
+
+            $meta[$connectionId] = [
+                'status'          => $status,
+                'active'          => in_array($status, ['queued', 'running'], true),
+                'run_id'          => $latest?->id,
+                'progress_percent'=> max(0, min(100, $progressPercent)),
+                'progress_done'   => $progressDone,
+                'progress_total'  => $progressTotal,
+                'stage'           => (string) ($stats['stage'] ?? ''),
+                'imported'        => max(0, (int) ($successStats['imported'] ?? 0)),
+                'last_finished_at'=> $latestSuccess?->finished_at?->format('Y-m-d H:i:s'),
+                'last_error'      => (string) ($latest?->error_message ?? ''),
+            ];
+        }
+
+        return $meta;
     }
 
     /**

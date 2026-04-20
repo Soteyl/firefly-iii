@@ -43,15 +43,23 @@ class MonobankImportService
      * @throws JsonException
      * @throws MonobankException
      */
-    public function syncConnection(BankConnection $connection, string $trigger = 'manual'): BankSyncRun
+    public function syncConnection(BankConnection $connection, string $trigger = 'manual', ?BankSyncRun $run = null): BankSyncRun
     {
-        $run = new BankSyncRun([
-            'bank_connection_id' => $connection->id,
-            'trigger'            => $trigger,
-            'status'             => 'running',
-            'started_at'         => now(),
-        ]);
-        $run->save();
+        if (!$run instanceof BankSyncRun) {
+            $run = new BankSyncRun([
+                'bank_connection_id' => $connection->id,
+                'trigger'            => $trigger,
+                'status'             => 'running',
+                'started_at'         => now(),
+            ]);
+            $run->save();
+        } else {
+            $run->trigger      = $trigger;
+            $run->status       = 'running';
+            $run->finished_at  = null;
+            $run->error_message = null;
+            $run->save();
+        }
 
         $stats = [
             'accounts_considered' => 0,
@@ -60,6 +68,9 @@ class MonobankImportService
             'duplicates'          => 0,
             'skipped'             => 0,
             'unmapped'            => 0,
+            'progress_total'      => 0,
+            'progress_done'       => 0,
+            'stage'               => 'starting',
         ];
 
         try {
@@ -69,6 +80,8 @@ class MonobankImportService
                 ->orderBy('id')
                 ->get()
             ;
+            $stats['progress_total'] = $accounts->count();
+            $this->storeProgress($run, $stats, 'polling');
 
             $polledAccountCount = 0;
             /** @var array<int, array{mapping: BankConnectionAccount, statements: array<int, array>}> $statementsByMapping */
@@ -77,6 +90,8 @@ class MonobankImportService
                 ++$stats['accounts_considered'];
                 if (null === $mapping->firefly_account_id || false === $mapping->enabled) {
                     ++$stats['unmapped'];
+                    ++$stats['progress_done'];
+                    $this->storeProgress($run, $stats, 'polling');
                     continue;
                 }
 
@@ -93,6 +108,8 @@ class MonobankImportService
                 $statementsByMapping[(int) $mapping->id] = ['mapping' => $mapping, 'statements' => $statements];
             }
 
+            $this->storeProgress($run, $stats, 'importing');
+
             $consumedExternalIds = [];
             foreach ($statementsByMapping as $entry) {
                 $this->syncMappedAccount(
@@ -103,10 +120,13 @@ class MonobankImportService
                     $consumedExternalIds,
                     $stats
                 );
+                ++$stats['progress_done'];
+                $this->storeProgress($run, $stats, 'importing');
             }
 
             $run->status      = 'success';
             $run->finished_at = now();
+            $stats['stage'] = 'completed';
             $run->stats_json  = $stats;
             $run->save();
 
@@ -121,6 +141,7 @@ class MonobankImportService
 
             $run->status        = 'failed';
             $run->finished_at   = now();
+            $stats['stage'] = 'failed';
             $run->stats_json    = $stats;
             $run->error_message = $e->getMessage();
             $run->save();
@@ -135,7 +156,17 @@ class MonobankImportService
     }
 
     /**
-     * @param array<string, int>                                                  $stats
+     * @param array<string, int|string> $stats
+     */
+    private function storeProgress(BankSyncRun $run, array $stats, string $stage): void
+    {
+        $stats['stage'] = $stage;
+        $run->stats_json = $stats;
+        $run->save();
+    }
+
+    /**
+     * @param array<string, int|string>                                           $stats
      * @param array<int, array{mapping: BankConnectionAccount, statements: array<int, array>}> $statementsByMapping
      * @param array<string, bool>                                                 $consumedExternalIds
      *

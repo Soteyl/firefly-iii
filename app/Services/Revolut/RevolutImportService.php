@@ -40,15 +40,23 @@ class RevolutImportService
      * @throws JsonException
      * @throws RevolutException
      */
-    public function syncConnection(BankConnection $connection, string $deviceId, string $trigger = 'manual'): BankSyncRun
+    public function syncConnection(BankConnection $connection, string $deviceId, string $trigger = 'manual', ?BankSyncRun $run = null): BankSyncRun
     {
-        $run = new BankSyncRun([
-            'bank_connection_id' => $connection->id,
-            'trigger'            => $trigger,
-            'status'             => 'running',
-            'started_at'         => now(),
-        ]);
-        $run->save();
+        if (!$run instanceof BankSyncRun) {
+            $run = new BankSyncRun([
+                'bank_connection_id' => $connection->id,
+                'trigger'            => $trigger,
+                'status'             => 'running',
+                'started_at'         => now(),
+            ]);
+            $run->save();
+        } else {
+            $run->trigger = $trigger;
+            $run->status = 'running';
+            $run->finished_at = null;
+            $run->error_message = null;
+            $run->save();
+        }
 
         $stats = [
             'accounts_considered' => 0,
@@ -57,6 +65,9 @@ class RevolutImportService
             'duplicates'          => 0,
             'skipped'             => 0,
             'unmapped'            => 0,
+            'progress_total'      => 0,
+            'progress_done'       => 0,
+            'stage'               => 'starting',
         ];
 
         try {
@@ -70,11 +81,15 @@ class RevolutImportService
                 ->orderBy('id')
                 ->get()
             ;
+            $stats['progress_total'] = $accounts->count();
+            $this->storeProgress($run, $stats, 'importing');
 
             foreach ($accounts as $mapping) {
                 ++$stats['accounts_considered'];
                 if (null === $mapping->firefly_account_id || false === $mapping->enabled) {
                     ++$stats['unmapped'];
+                    ++$stats['progress_done'];
+                    $this->storeProgress($run, $stats, 'importing');
                     continue;
                 }
 
@@ -84,10 +99,13 @@ class RevolutImportService
                 } else {
                     $this->syncMappedAccount($connection, $mapping, $deviceId, $stats);
                 }
+                ++$stats['progress_done'];
+                $this->storeProgress($run, $stats, 'importing');
             }
 
             $run->status = 'success';
             $run->finished_at = now();
+            $stats['stage'] = 'completed';
             $run->stats_json = $stats;
             $run->save();
 
@@ -102,6 +120,7 @@ class RevolutImportService
 
             $run->status = 'failed';
             $run->finished_at = now();
+            $stats['stage'] = 'failed';
             $run->stats_json = $stats;
             $run->error_message = $e->getMessage();
             $run->save();
@@ -116,7 +135,7 @@ class RevolutImportService
     }
 
     /**
-     * @param array<string, int> $stats
+     * @param array<string, int|string> $stats
      *
      * @throws FireflyException
      * @throws JsonException
@@ -203,7 +222,7 @@ class RevolutImportService
 
     /**
      * @param array<string, mixed> $providerConfig
-     * @param array<string, int>   $stats
+     * @param array<string, int|string>   $stats
      *
      * @throws FireflyException
      * @throws JsonException
@@ -286,6 +305,16 @@ class RevolutImportService
         $mapping->last_seen_statement_id = $lastSeenId;
         $mapping->last_synced_statement_ts = $lastSyncedTime;
         $mapping->save();
+    }
+
+    /**
+     * @param array<string, int|string> $stats
+     */
+    private function storeProgress(BankSyncRun $run, array $stats, string $stage): void
+    {
+        $stats['stage'] = $stage;
+        $run->stats_json = $stats;
+        $run->save();
     }
 
     private function isBeforeFirstImportStart(BankConnectionAccount $mapping, int $statementTimestamp): bool
