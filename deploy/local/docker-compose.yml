@@ -1,0 +1,140 @@
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: fireflyiii/core:local-monobank
+    hostname: app
+    container_name: firefly_iii_core
+    restart: always
+    volumes:
+      - firefly_iii_upload:/var/www/html/storage/upload
+      - ./enable-banking-keys:/var/www/html/storage/app/enable-banking-keys
+      - /Assistant:/Assistant:ro
+    env_file: .env
+    networks:
+      - firefly_iii
+    ports:
+      - 8081:8080
+    depends_on:
+      - db
+
+  pico:
+    image: cioraneanu/firefly-pico:latest
+    hostname: pico
+    container_name: firefly_pico
+    restart: always
+    env_file: .pico.env
+    networks:
+      - firefly_iii
+    ports:
+      - 6976:80
+    depends_on:
+      - pico_db
+
+  pico_db:
+    image: postgres:18
+    hostname: pico_db
+    container_name: firefly_pico_db
+    restart: always
+    env_file: .pico.db.env
+    networks:
+      - firefly_iii
+    volumes:
+      - firefly_pico_db:/var/lib/postgresql
+
+  db:
+    image: mariadb:lts
+    hostname: db
+    container_name: firefly_iii_db
+    restart: always
+    env_file: .db.env
+    networks:
+      - firefly_iii
+    volumes:
+      - firefly_iii_db:/var/lib/mysql
+
+  cron:
+    image: alpine
+    restart: always
+    container_name: firefly_iii_cron
+    env_file: .env
+    command:
+      [
+        "sh",
+        "-c",
+        "apk add tzdata && (ln -s /usr/share/zoneinfo/$$TZ /etc/localtime || true) && echo \"*/5 * * * * wget -qO- http://app:8080/api/v1/cron/$$STATIC_CRON_TOKEN;echo\" | crontab - && crond -f -L /dev/stdout",
+      ]
+    networks:
+      - firefly_iii
+    depends_on:
+      - app
+
+  queue_worker:
+    image: fireflyiii/core:local-monobank
+    container_name: firefly_iii_queue_worker
+    restart: always
+    env_file: .env
+    working_dir: /var/www/html
+    entrypoint: ["sh", "-lc"]
+    command:
+      [
+        "composer dump-autoload >/dev/null 2>&1 && php artisan package:discover >/dev/null 2>&1 && php artisan queue:work database --queue=default --sleep=1 --tries=1 --timeout=1800",
+      ]
+    networks:
+      - firefly_iii
+    depends_on:
+      - db
+      - app
+
+  firefly_mcp:
+    image: node:22-alpine
+    container_name: firefly_mcp
+    restart: always
+    env_file: .env
+    command:
+      [
+        "sh",
+        "-c",
+        "npm install -g @firefly-iii-mcp/server@latest && firefly-iii-mcp-server --pat \"$FIREFLY_MCP_PAT\" --baseUrl \"$TELEGRAM_ASSISTANT_FIREFLY_BASE_URL\" --port 3010 --preset full --logLevel warn",
+      ]
+    networks:
+      - firefly_iii
+    ports:
+      - 3010:3010
+    depends_on:
+      - app
+
+  firefly_telegram_bot:
+    build:
+      context: ../telegram-assistant-bot
+      dockerfile: Dockerfile
+    container_name: firefly_telegram_bot
+    restart: always
+    env_file: .env
+    environment:
+      FIREFLY_ASSISTANT_CONFIG_URL: http://app:8080/telegram-assistant/config
+      MCP_HTTP_URL: http://firefly_mcp:3010/mcp
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - firefly_iii
+    depends_on:
+      - app
+      - firefly_mcp
+
+volumes:
+  firefly_iii_upload:
+    external: true
+    name: moneytrackerfirefly_firefly_iii_upload
+  firefly_iii_db:
+    external: true
+    name: moneytrackerfirefly_firefly_iii_db
+  firefly_pico_db:
+    external: true
+    name: moneytrackerfirefly_firefly_pico_db
+
+networks:
+  firefly_iii:
+    driver: bridge

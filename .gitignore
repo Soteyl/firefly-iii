@@ -28,3 +28,10 @@ public/v1/js/webhooks
 resources/assets/v2/node_modules
 resources/assets/v2/build
 public/v2/i18n
+
+# local deployment runtime secrets / keys
+deploy/local/.env
+deploy/local/.db.env
+deploy/local/.pico.env
+deploy/local/.pico.db.env
+deploy/local/enable-banking-keys/*.pem
