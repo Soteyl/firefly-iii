@@ -797,25 +797,6 @@ async function runAssistant(config, userInput, historyMessages = []) {
       })
       .filter(Boolean);
 
-    // Backward compatibility for previous wrapper-based behavior.
-    openAiTools.push({
-      type: 'function',
-      function: {
-        name: 'firefly_mcp_call',
-        description: 'Call a Firefly MCP tool by explicit name.',
-        parameters: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            tool_name: { type: 'string', description: 'Exact MCP tool name.' },
-            tool_arguments: { type: 'object', description: 'Tool arguments object.' },
-            arguments: { type: 'object', description: 'Legacy alias for tool_arguments.' },
-          },
-          required: ['tool_name'],
-        },
-      },
-    });
-
     let forcedToolNudgeSent = false;
     let hasToolExecution = false;
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
@@ -838,7 +819,7 @@ async function runAssistant(config, userInput, historyMessages = []) {
           });
           messages.push({
             role: 'user',
-            content: 'For this request, call firefly_mcp_call to fetch real Firefly data before answering.',
+            content: 'For this request, call available Firefly tools to fetch real data before answering.',
           });
           continue;
         }
@@ -856,7 +837,6 @@ async function runAssistant(config, userInput, historyMessages = []) {
         if (!call || call.type !== 'function' || !call.function?.name) {
           continue;
         }
-        console.log('[assistant-tool-call]', String(call.function.name || ''), String(call.function.arguments || '').slice(0, 500));
 
         let parsedArgs = {};
         try {
@@ -865,26 +845,13 @@ async function runAssistant(config, userInput, historyMessages = []) {
           parsedArgs = {};
         }
 
-        // Support two model output formats:
-        // 1) wrapper: firefly_mcp_call({tool_name, arguments})
-        // 2) direct: <mcp_tool_name>({...args})
-        const rawFunctionName = String(call.function.name || '').trim();
-        const isWrapperCall = rawFunctionName === 'firefly_mcp_call';
-        const toolName = isWrapperCall
-          ? String(parsedArgs.tool_name || '').trim()
-          : rawFunctionName;
-        const rawToolArgs = isWrapperCall
-          ? (
-            (parsedArgs.tool_arguments && typeof parsedArgs.tool_arguments === 'object' ? parsedArgs.tool_arguments : null)
-            || (parsedArgs.arguments && typeof parsedArgs.arguments === 'object' ? parsedArgs.arguments : {})
-          )
-          : (parsedArgs && typeof parsedArgs === 'object' ? parsedArgs : {});
+        const toolName = String(call.function.name || '').trim();
+        const rawToolArgs = (parsedArgs && typeof parsedArgs === 'object') ? parsedArgs : {};
         const toolArgs = normalizeToolArgsWithDefaults(toolName, rawToolArgs, toolSchemas.get(toolName), userInput);
 
         let toolResult;
         if (!toolName || !allowedToolNames.has(toolName)) {
           toolResult = { error: `Tool '${toolName}' is not allowed.` };
-          console.warn('[tool-call-skipped]', `requested=${toolName || '(empty)'}`, `allowed_count=${allowedToolNames.size}`);
         } else {
           try {
             console.log('[tool-call]', toolName, safeStringify(toolArgs).slice(0, 500));
@@ -902,7 +869,7 @@ async function runAssistant(config, userInput, historyMessages = []) {
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          name: 'firefly_mcp_call',
+          name: toolName,
           content: safeStringify(toolResult).slice(0, 12000),
         });
       }
