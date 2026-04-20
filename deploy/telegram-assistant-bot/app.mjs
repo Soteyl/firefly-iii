@@ -6,6 +6,11 @@ const MCP_HTTP_URL = (process.env.MCP_HTTP_URL || 'http://firefly_mcp:3010/mcp')
 const CODEX_RESPONSES_URL = (process.env.OPENAI_CODEX_RESPONSES_URL || 'https://chatgpt.com/backend-api/codex/responses').trim();
 const CODEX_ORIGINATOR = (process.env.OPENAI_CODEX_ORIGINATOR || 'firefly').trim();
 const CODEX_MODEL_FALLBACK = (process.env.OPENAI_CODEX_MODEL_FALLBACK || 'gpt-5.4').trim();
+const MOCK_MODE = ['1', 'true', 'yes', 'on'].includes(String(process.env.TELEGRAM_ASSISTANT_MOCK_MODE || '').trim().toLowerCase());
+const MOCK_USER_ID = Number.parseInt(process.env.TELEGRAM_ASSISTANT_MOCK_USER_ID || '269254014', 10);
+const MOCK_CHAT_ID = Number.parseInt(process.env.TELEGRAM_ASSISTANT_MOCK_CHAT_ID || String(MOCK_USER_ID), 10);
+const MOCK_STEP_DELAY_MS = Number.parseInt(process.env.TELEGRAM_ASSISTANT_MOCK_STEP_DELAY_MS || '250', 10);
+const MOCK_CONFIG_JSON_RAW = String(process.env.TELEGRAM_ASSISTANT_MOCK_CONFIG_JSON || '').trim();
 const POLL_TIMEOUT_SECONDS = Number.parseInt(process.env.TELEGRAM_POLL_TIMEOUT || '45', 10);
 const MAX_TOOL_TURNS = Number.parseInt(process.env.TELEGRAM_ASSISTANT_MAX_TOOL_TURNS || '6', 10);
 const MAX_USER_INPUT = 4000;
@@ -15,20 +20,32 @@ const HTTP_TIMEOUT_MS = Number.parseInt(process.env.TELEGRAM_ASSISTANT_HTTP_TIME
 const HTTP_RETRIES = Number.parseInt(process.env.TELEGRAM_ASSISTANT_HTTP_RETRIES || '3', 10);
 const HTTP_RETRY_BASE_MS = Number.parseInt(process.env.TELEGRAM_ASSISTANT_HTTP_RETRY_BASE_MS || '600', 10);
 
-if (!TELEGRAM_BOT_TOKEN) {
+if (!MOCK_MODE && !TELEGRAM_BOT_TOKEN) {
   throw new Error('TELEGRAM_BOT_TOKEN is required');
 }
-if (!FIRELFY_ASSISTANT_SECRET) {
+if (!MOCK_MODE && !FIRELFY_ASSISTANT_SECRET) {
   throw new Error('TELEGRAM_ASSISTANT_SHARED_SECRET is required');
 }
 
 let offset = 0;
 const chatState = new Map();
+const mockBotReplies = [];
+const mockConfig = (() => {
+  if (MOCK_CONFIG_JSON_RAW === '') {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(MOCK_CONFIG_JSON_RAW);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+})();
 
 const systemPrompt = `You are a Firefly III Telegram assistant.
 
 Rules:
-- Use the tool firefly_mcp_call when you need account/transaction data or mutations.
+- Use the available Firefly MCP tools directly when you need account/transaction data or mutations.
 - Do not claim actions succeeded unless tool output confirms it.
 - Keep responses concise but accurate.
 - Maintain chat context across turns. Short replies like "2", "так", "поточний" are answers to your previous question.
@@ -187,6 +204,11 @@ async function telegram(method, payload) {
 
 async function sendMessage(chatId, text) {
   const safeText = String(text || '').slice(0, 3900);
+  if (MOCK_MODE) {
+    mockBotReplies.push({ chatId, text: safeText, at: new Date().toISOString() });
+    console.log('[mock-bot-message]', `chat=${chatId}`, safeText.slice(0, 1200));
+    return;
+  }
   const htmlText = renderTelegramHtml(safeText);
   try {
     await telegram('sendMessage', {
@@ -239,6 +261,9 @@ function renderTelegramHtml(input) {
 }
 
 async function getAssistantConfig(telegramUserId) {
+  if (MOCK_MODE && mockConfig) {
+    return mockConfig;
+  }
   const url = new URL(FIRELFY_ASSISTANT_CONFIG_URL);
   url.searchParams.set('telegram_user_id', String(telegramUserId));
   const { body } = await httpJson(url.toString(), {
@@ -520,6 +545,15 @@ function fromCodexResponse(body) {
           entry.function.arguments += event.delta;
         }
       }
+      if (event?.type === 'response.function_call_arguments.done') {
+        const callId = String(event.call_id || '');
+        if (toolCallMap.has(callId)) {
+          const entry = toolCallMap.get(callId);
+          if (typeof event.arguments === 'string' && event.arguments.trim() !== '') {
+            entry.function.arguments = event.arguments;
+          }
+        }
+      }
       if (event?.response && typeof event.response === 'object') {
         const parsed = normalizeFromOutput(event.response);
         if (parsed.content !== '') {
@@ -653,38 +687,137 @@ function safeStringify(value) {
   }
 }
 
+function formatUtcDate(date) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function inferDateRangeFromText(userInput) {
+  const text = String(userInput || '').toLowerCase();
+  const yearMatch = text.match(/\b(20\d{2})\b/);
+  const parsedYear = yearMatch ? Number.parseInt(yearMatch[1], 10) : NaN;
+  const monthMap = new Map([
+    ['january', 1], ['jan', 1], ['січень', 1], ['січня', 1],
+    ['february', 2], ['feb', 2], ['лютий', 2], ['лютого', 2],
+    ['march', 3], ['mar', 3], ['березень', 3], ['березня', 3],
+    ['april', 4], ['apr', 4], ['квітень', 4], ['квітня', 4],
+    ['may', 5], ['травень', 5], ['травня', 5],
+    ['june', 6], ['jun', 6], ['червень', 6], ['червня', 6],
+    ['july', 7], ['jul', 7], ['липень', 7], ['липня', 7],
+    ['august', 8], ['aug', 8], ['серпень', 8], ['серпня', 8],
+    ['september', 9], ['sep', 9], ['вересень', 9], ['вересня', 9],
+    ['october', 10], ['oct', 10], ['жовтень', 10], ['жовтня', 10],
+    ['november', 11], ['nov', 11], ['листопад', 11], ['листопада', 11],
+    ['december', 12], ['dec', 12], ['грудень', 12], ['грудня', 12],
+  ]);
+
+  let month = null;
+  for (const [token, index] of monthMap.entries()) {
+    if (text.includes(token)) {
+      month = index;
+      break;
+    }
+  }
+
+  const now = new Date();
+  if (month == null && /(current month|this month|поточ(ний|ного) місяц|цього місяц)/i.test(text)) {
+    month = now.getUTCMonth() + 1;
+  }
+  if (month == null) {
+    return null;
+  }
+  const year = Number.isFinite(parsedYear) ? parsedYear : now.getUTCFullYear();
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 0));
+  return { start: formatUtcDate(start), end: formatUtcDate(end) };
+}
+
+function normalizeToolArgsWithDefaults(toolName, toolArgs, toolSchema, userInput) {
+  const args = (toolArgs && typeof toolArgs === 'object') ? { ...toolArgs } : {};
+  const requiresStart = Array.isArray(toolSchema?.required) && toolSchema.required.includes('start');
+  const requiresEnd = Array.isArray(toolSchema?.required) && toolSchema.required.includes('end');
+  if (!requiresStart && !requiresEnd) {
+    return args;
+  }
+
+  const hasStart = typeof args.start === 'string' && args.start.trim() !== '';
+  const hasEnd = typeof args.end === 'string' && args.end.trim() !== '';
+  if (hasStart && hasEnd) {
+    return args;
+  }
+
+  const inferred = inferDateRangeFromText(userInput);
+  if (inferred) {
+    if (!hasStart && requiresStart) {
+      args.start = inferred.start;
+    }
+    if (!hasEnd && requiresEnd) {
+      args.end = inferred.end;
+    }
+    console.log('[tool-call-autofill-dates]', toolName, args.start || '', args.end || '');
+  }
+  return args;
+}
+
 async function runAssistant(config, userInput, historyMessages = []) {
   const mcp = await initMcpSession();
   try {
     const listResult = await mcp.request('tools/list', {});
     const tools = Array.isArray(listResult?.tools) ? listResult.tools : [];
     const allowedToolNames = new Set(tools.map((tool) => String(tool.name || '')).filter(Boolean));
+    const toolSchemas = new Map(
+      tools
+        .map((tool) => [String(tool?.name || '').trim(), tool?.inputSchema && typeof tool.inputSchema === 'object' ? tool.inputSchema : null])
+        .filter(([name]) => name !== ''),
+    );
     const requireToolUse = shouldRequireToolUse(userInput);
     console.log('[mcp-tools]', `count=${allowedToolNames.size}`, `require_tool=${requireToolUse ? 'yes' : 'no'}`);
 
     const history = Array.isArray(historyMessages) ? historyMessages : [];
     const messages = [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: userInput }];
 
-    const openAiTools = [
-      {
-        type: 'function',
-        function: {
-          name: 'firefly_mcp_call',
-          description: 'Call a Firefly MCP tool.',
-          parameters: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              tool_name: { type: 'string', description: 'Exact MCP tool name.' },
-              arguments: { type: 'object', description: 'Tool arguments object.' },
-            },
-            required: ['tool_name', 'arguments'],
+    const openAiTools = tools
+      .map((tool) => {
+        const name = String(tool?.name || '').trim();
+        if (name === '') {
+          return null;
+        }
+        return {
+          type: 'function',
+          function: {
+            name,
+            description: String(tool?.description || ''),
+            parameters: tool?.inputSchema && typeof tool.inputSchema === 'object'
+              ? tool.inputSchema
+              : { type: 'object', properties: {}, additionalProperties: true },
           },
+        };
+      })
+      .filter(Boolean);
+
+    // Backward compatibility for previous wrapper-based behavior.
+    openAiTools.push({
+      type: 'function',
+      function: {
+        name: 'firefly_mcp_call',
+        description: 'Call a Firefly MCP tool by explicit name.',
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            tool_name: { type: 'string', description: 'Exact MCP tool name.' },
+            tool_arguments: { type: 'object', description: 'Tool arguments object.' },
+            arguments: { type: 'object', description: 'Legacy alias for tool_arguments.' },
+          },
+          required: ['tool_name'],
         },
       },
-    ];
+    });
 
     let forcedToolNudgeSent = false;
+    let hasToolExecution = false;
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
       const toolChoice = (requireToolUse && turn === 0) ? 'required' : 'auto';
       console.log('[assistant-turn]', `turn=${turn + 1}`, `model=${config.openai_model}`, `tool_choice=${toolChoice}`);
@@ -697,7 +830,7 @@ async function runAssistant(config, userInput, historyMessages = []) {
       console.log('[assistant-turn-result]', `turn=${turn + 1}`, `tool_calls=${toolCallsCount}`);
 
       if (!choice.tool_calls || choice.tool_calls.length === 0) {
-        if (requireToolUse && !forcedToolNudgeSent) {
+        if (requireToolUse && !forcedToolNudgeSent && !hasToolExecution) {
           forcedToolNudgeSent = true;
           messages.push({
             role: 'assistant',
@@ -720,9 +853,10 @@ async function runAssistant(config, userInput, historyMessages = []) {
       });
 
       for (const call of choice.tool_calls) {
-        if (!call || call.type !== 'function' || call.function?.name !== 'firefly_mcp_call') {
+        if (!call || call.type !== 'function' || !call.function?.name) {
           continue;
         }
+        console.log('[assistant-tool-call]', String(call.function.name || ''), String(call.function.arguments || '').slice(0, 500));
 
         let parsedArgs = {};
         try {
@@ -731,12 +865,26 @@ async function runAssistant(config, userInput, historyMessages = []) {
           parsedArgs = {};
         }
 
-        const toolName = String(parsedArgs.tool_name || '').trim();
-        const toolArgs = parsedArgs.arguments && typeof parsedArgs.arguments === 'object' ? parsedArgs.arguments : {};
+        // Support two model output formats:
+        // 1) wrapper: firefly_mcp_call({tool_name, arguments})
+        // 2) direct: <mcp_tool_name>({...args})
+        const rawFunctionName = String(call.function.name || '').trim();
+        const isWrapperCall = rawFunctionName === 'firefly_mcp_call';
+        const toolName = isWrapperCall
+          ? String(parsedArgs.tool_name || '').trim()
+          : rawFunctionName;
+        const rawToolArgs = isWrapperCall
+          ? (
+            (parsedArgs.tool_arguments && typeof parsedArgs.tool_arguments === 'object' ? parsedArgs.tool_arguments : null)
+            || (parsedArgs.arguments && typeof parsedArgs.arguments === 'object' ? parsedArgs.arguments : {})
+          )
+          : (parsedArgs && typeof parsedArgs === 'object' ? parsedArgs : {});
+        const toolArgs = normalizeToolArgsWithDefaults(toolName, rawToolArgs, toolSchemas.get(toolName), userInput);
 
         let toolResult;
         if (!toolName || !allowedToolNames.has(toolName)) {
           toolResult = { error: `Tool '${toolName}' is not allowed.` };
+          console.warn('[tool-call-skipped]', `requested=${toolName || '(empty)'}`, `allowed_count=${allowedToolNames.size}`);
         } else {
           try {
             console.log('[tool-call]', toolName, safeStringify(toolArgs).slice(0, 500));
@@ -744,6 +892,7 @@ async function runAssistant(config, userInput, historyMessages = []) {
               name: toolName,
               arguments: toolArgs,
             });
+            hasToolExecution = true;
           } catch (error) {
             toolResult = { error: error instanceof Error ? error.message : String(error) };
             console.error('[tool-call-error]', toolName, toolResult.error);
@@ -794,7 +943,9 @@ async function handleUpdate(update) {
   }
 
   const userInput = text.slice(0, MAX_USER_INPUT);
-  await telegram('sendChatAction', { chat_id: chat.id, action: 'typing' });
+  if (!MOCK_MODE) {
+    await telegram('sendChatAction', { chat_id: chat.id, action: 'typing' });
+  }
   console.log('[message]', `chat=${chat.id}`, `user=${from.id}`, userInput.slice(0, 300));
 
   const history = getChatHistory(chat.id);
@@ -834,7 +985,54 @@ async function pollLoop() {
   }
 }
 
-pollLoop().catch((error) => {
+function parseMockMessages() {
+  const raw = String(process.env.TELEGRAM_ASSISTANT_MOCK_MESSAGES || '').trim();
+  if (raw === '') {
+    return ['дай статистику витрат за квітень 2026'];
+  }
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((entry) => String(entry || '').trim()).filter(Boolean);
+      }
+    } catch {
+      // fallback below
+    }
+  }
+  return raw.split('||').map((entry) => String(entry || '').trim()).filter(Boolean);
+}
+
+async function runMockLoop() {
+  const messages = parseMockMessages();
+  console.log('[mock-start]', `count=${messages.length}`, `user=${MOCK_USER_ID}`, `chat=${MOCK_CHAT_ID}`);
+
+  let updateId = 1;
+  for (const text of messages) {
+    const update = {
+      update_id: updateId++,
+      message: {
+        text,
+        from: { id: MOCK_USER_ID },
+        chat: { id: MOCK_CHAT_ID, type: 'private' },
+      },
+    };
+
+    try {
+      console.log('[mock-user-message]', text);
+      await handleUpdate(update);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[mock-update-error]', message, error instanceof Error && error.stack ? error.stack : '');
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, MOCK_STEP_DELAY_MS)));
+  }
+
+  console.log('[mock-finished]', `replies=${mockBotReplies.length}`);
+}
+
+(MOCK_MODE ? runMockLoop() : pollLoop()).catch((error) => {
   console.error('[fatal]', error);
   process.exit(1);
 });
