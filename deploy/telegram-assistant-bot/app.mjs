@@ -303,9 +303,10 @@ async function initMcpSession() {
   };
 }
 
-async function openAiChatCompletion(apiToken, model, messages, tools) {
+async function openAiChatCompletion(apiToken, model, messages, tools, options = {}) {
+  const toolChoice = options?.toolChoice || 'auto';
   if (isLikelyOpenAiCodexOAuthToken(apiToken)) {
-    return await openAiCodexResponsesCompletion(apiToken, model, messages, tools);
+    return await openAiCodexResponsesCompletion(apiToken, model, messages, tools, { toolChoice });
   }
 
   const { body } = await httpJson('https://api.openai.com/v1/chat/completions', {
@@ -318,7 +319,7 @@ async function openAiChatCompletion(apiToken, model, messages, tools) {
       temperature: 0.2,
       messages,
       tools,
-      tool_choice: 'auto',
+      tool_choice: toolChoice,
     }),
   });
   return body;
@@ -401,6 +402,29 @@ function toCodexInput(messages) {
 }
 
 function fromCodexResponse(body) {
+  const normalizeToolCall = (raw) => {
+    if (!raw || typeof raw !== 'object') {
+      return null;
+    }
+    const rawName = String(raw.name || '').trim();
+    const rawId = String(raw.call_id || raw.callId || raw.id || '').trim();
+    if (rawName === '' || rawId === '') {
+      return null;
+    }
+    const callId = rawId.includes('|') ? rawId.split('|')[0] : rawId;
+    const args = typeof raw.arguments === 'string'
+      ? raw.arguments
+      : safeStringify(raw.arguments && typeof raw.arguments === 'object' ? raw.arguments : {});
+    return {
+      id: callId,
+      type: 'function',
+      function: {
+        name: rawName,
+        arguments: args || '{}',
+      },
+    };
+  };
+
   const normalizeFromOutput = (normalizedBody) => {
     const output = Array.isArray(normalizedBody?.output) ? normalizedBody.output : [];
     const textParts = [];
@@ -416,23 +440,36 @@ function fromCodexResponse(body) {
           if (part?.type === 'refusal' && typeof part.refusal === 'string') {
             textParts.push(part.refusal);
           }
+          if (part?.type === 'toolCall' || part?.type === 'tool_call' || part?.type === 'function_call') {
+            const toolCall = normalizeToolCall(part);
+            if (toolCall) {
+              toolCalls.push(toolCall);
+            }
+          }
         }
       }
       if (item?.type === 'function_call') {
-        toolCalls.push({
-          id: String(item.call_id || item.id || ''),
-          type: 'function',
-          function: {
-            name: String(item.name || ''),
-            arguments: String(item.arguments || '{}'),
-          },
-        });
+        const toolCall = normalizeToolCall(item);
+        if (toolCall) {
+          toolCalls.push(toolCall);
+        }
       }
+    }
+
+    const seen = new Set();
+    const uniqueToolCalls = [];
+    for (const call of toolCalls) {
+      const key = `${call.id}:${call.function?.name || ''}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      uniqueToolCalls.push(call);
     }
 
     return {
       content: textParts.join('\n').trim(),
-      toolCalls,
+      toolCalls: uniqueToolCalls,
     };
   };
 
@@ -516,7 +553,7 @@ function fromCodexResponse(body) {
   };
 }
 
-async function openAiCodexResponsesCompletion(apiToken, model, messages, tools) {
+async function openAiCodexResponsesCompletion(apiToken, model, messages, tools, options = {}) {
   const accountId = extractCodexAccountId(apiToken);
   if (!accountId) {
     throw new Error('Codex OAuth token does not contain chatgpt_account_id.');
@@ -542,7 +579,7 @@ async function openAiCodexResponsesCompletion(apiToken, model, messages, tools) 
     store: false,
     instructions,
     input: toCodexInput(messages),
-    tool_choice: 'auto',
+    tool_choice: options?.toolChoice || 'auto',
     parallel_tool_calls: true,
     tools: codexTools,
     text: { verbosity: 'medium' },
@@ -578,6 +615,11 @@ async function openAiCodexResponsesCompletion(apiToken, model, messages, tools) 
   }
 }
 
+function shouldRequireToolUse(userInput) {
+  const text = String(userInput || '').toLowerCase();
+  return /(статистик|витрат|витрат[аи]?|доход|транзакц|квіт|апр|баланс|spend|expense|income|transaction|statistics|stats|month|місяц|рік|year|budget|budgets)/i.test(text);
+}
+
 function normalizeCodexModel(model) {
   const lower = String(model || '').toLowerCase();
   if (lower === '' || lower.includes('mini') || lower === 'gpt-4o' || lower === 'gpt-4.1') {
@@ -600,6 +642,8 @@ async function runAssistant(config, userInput, historyMessages = []) {
     const listResult = await mcp.request('tools/list', {});
     const tools = Array.isArray(listResult?.tools) ? listResult.tools : [];
     const allowedToolNames = new Set(tools.map((tool) => String(tool.name || '')).filter(Boolean));
+    const requireToolUse = shouldRequireToolUse(userInput);
+    console.log('[mcp-tools]', `count=${allowedToolNames.size}`, `require_tool=${requireToolUse ? 'yes' : 'no'}`);
 
     const history = Array.isArray(historyMessages) ? historyMessages : [];
     const messages = [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: userInput }];
@@ -623,15 +667,31 @@ async function runAssistant(config, userInput, historyMessages = []) {
       },
     ];
 
+    let forcedToolNudgeSent = false;
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
-      console.log('[assistant-turn]', `turn=${turn + 1}`, `model=${config.openai_model}`);
-      const completion = await openAiChatCompletion(config.openai_api_token, config.openai_model, messages, openAiTools);
+      const toolChoice = (requireToolUse && turn === 0) ? 'required' : 'auto';
+      console.log('[assistant-turn]', `turn=${turn + 1}`, `model=${config.openai_model}`, `tool_choice=${toolChoice}`);
+      const completion = await openAiChatCompletion(config.openai_api_token, config.openai_model, messages, openAiTools, { toolChoice });
       const choice = completion?.choices?.[0]?.message;
       if (!choice) {
         return 'No response from model.';
       }
+      const toolCallsCount = Array.isArray(choice.tool_calls) ? choice.tool_calls.length : 0;
+      console.log('[assistant-turn-result]', `turn=${turn + 1}`, `tool_calls=${toolCallsCount}`);
 
       if (!choice.tool_calls || choice.tool_calls.length === 0) {
+        if (requireToolUse && !forcedToolNudgeSent) {
+          forcedToolNudgeSent = true;
+          messages.push({
+            role: 'assistant',
+            content: typeof choice.content === 'string' ? choice.content : safeStringify(choice.content),
+          });
+          messages.push({
+            role: 'user',
+            content: 'For this request, call firefly_mcp_call to fetch real Firefly data before answering.',
+          });
+          continue;
+        }
         const content = typeof choice.content === 'string' ? choice.content : safeStringify(choice.content);
         return content || 'No textual response.';
       }
