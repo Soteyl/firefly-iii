@@ -155,6 +155,21 @@ function parseSsePayload(bodyText) {
   return { events };
 }
 
+function unwrapJsonRpcBody(body) {
+  if (body && typeof body === 'object' && (Object.prototype.hasOwnProperty.call(body, 'result') || Object.prototype.hasOwnProperty.call(body, 'error'))) {
+    return body;
+  }
+
+  const events = Array.isArray(body?.events) ? body.events : [];
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event && typeof event === 'object' && (Object.prototype.hasOwnProperty.call(event, 'result') || Object.prototype.hasOwnProperty.call(event, 'error'))) {
+      return event;
+    }
+  }
+  return body;
+}
+
 async function telegram(method, payload) {
   const pollTimeoutMs = method === 'getUpdates'
     ? Math.max(HTTP_TIMEOUT_MS, (POLL_TIMEOUT_SECONDS + 15) * 1000)
@@ -254,10 +269,11 @@ async function initMcpSession() {
     method: 'POST',
     body: JSON.stringify(initRequest),
   });
+  const initBody = unwrapJsonRpcBody(body);
 
   const sessionId = headers.get('mcp-session-id');
   if (!sessionId) {
-    throw new Error(`MCP session id missing in initialize response: ${JSON.stringify(body)}`);
+    throw new Error(`MCP session id missing in initialize response: ${JSON.stringify(initBody)}`);
   }
 
   await httpJson(MCP_HTTP_URL, {
@@ -284,10 +300,11 @@ async function initMcpSession() {
         headers: { 'mcp-session-id': sessionId },
         body: JSON.stringify(payload),
       });
-      if (responseBody.error) {
-        throw new Error(`MCP error: ${JSON.stringify(responseBody.error)}`);
+      const rpcBody = unwrapJsonRpcBody(responseBody);
+      if (rpcBody?.error) {
+        throw new Error(`MCP error: ${JSON.stringify(rpcBody.error)}`);
       }
-      return responseBody.result;
+      return rpcBody?.result;
     },
     async close() {
       try {
