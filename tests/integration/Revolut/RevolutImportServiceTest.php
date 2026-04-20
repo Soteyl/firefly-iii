@@ -9,6 +9,7 @@ use FireflyIII\Models\Account;
 use FireflyIII\Models\BankConnection;
 use FireflyIII\Models\BankConnectionAccount;
 use FireflyIII\Models\Category;
+use FireflyIII\Models\TransactionJournal;
 use FireflyIII\Models\TransactionJournalMeta;
 use FireflyIII\Services\Revolut\RevolutClient;
 use FireflyIII\Services\Revolut\RevolutImportService;
@@ -194,6 +195,42 @@ final class RevolutImportServiceTest extends TestCase
             ->firstOrFail()
         ;
         $this->assertSame('Special payment', $overrideMeta->transactionJournal->categories()->firstOrFail()->name);
+    }
+
+    public function testSanitizesDirtyRevolutDisplayNameSuffixes(): void
+    {
+        $transaction = [
+            'id'          => 'rev-tx-bolt-1',
+            'legId'       => 'rev-leg-bolt-1',
+            'createdDate' => now()->subMinutes(2)->timestamp * 1000,
+            'amount'      => -955,
+            'currency'    => 'EUR',
+            'description' => 'Bolt.euo2604191418',
+            'category'    => 'Bolt.euo2604191418',
+            'type'        => 'CARD_PAYMENT',
+            'state'       => 'COMPLETED',
+            'merchant'    => [],
+        ];
+
+        $mock = Mockery::mock(RevolutClient::class);
+        $mock->shouldReceive('getTransactions')->once()->andReturn([$transaction]);
+        app()->instance(RevolutClient::class, $mock);
+
+        /** @var RevolutImportService $service */
+        $service = app(RevolutImportService::class);
+        $run = $service->syncConnection($this->connection, 'device-123', 'manual');
+        $this->assertSame('success', $run->status);
+        $this->assertSame(1, $run->stats_json['imported']);
+
+        /** @var TransactionJournalMeta $meta */
+        $meta = TransactionJournalMeta::query()
+            ->where('name', 'external_id')
+            ->where('data', json_encode('revolut:wallet-main:pocket-eur:rev-leg-bolt-1'))
+            ->firstOrFail()
+        ;
+        /** @var TransactionJournal $journal */
+        $journal = $meta->transactionJournal()->firstOrFail();
+        $this->assertSame('Bolt', $journal->description);
     }
 
     #[Override]

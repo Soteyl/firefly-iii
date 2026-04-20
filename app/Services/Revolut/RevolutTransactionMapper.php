@@ -188,7 +188,7 @@ class RevolutTransactionMapper
         ];
 
         foreach ($candidates as $candidate) {
-            $value = trim((string) $candidate);
+            $value = $this->normalizeDisplayText((string) $candidate);
             if ('' !== $value) {
                 return $value;
             }
@@ -201,14 +201,14 @@ class RevolutTransactionMapper
     {
         $merchant = $transaction['merchant']['name'] ?? null;
         $candidates = [
-            $transaction['category'] ?? null,
             $merchant,
             $transaction['description'] ?? null,
+            $transaction['category'] ?? null,
             $transaction['type'] ?? null,
         ];
 
         foreach ($candidates as $candidate) {
-            $value = trim((string) $candidate);
+            $value = $this->normalizeDisplayText((string) $candidate);
             if ('' !== $value) {
                 return mb_substr($value, 0, 255);
             }
@@ -279,13 +279,13 @@ class RevolutTransactionMapper
         $remittance = $transaction['remittance_information'] ?? [];
         if (is_array($remittance)) {
             foreach ($remittance as $line) {
-                $value = trim((string) $line);
+                $value = $this->normalizeDisplayText((string) $line);
                 if ('' !== $value) {
                     return mb_substr($value, 0, 255);
                 }
             }
         }
-        $note = trim((string) ($transaction['note'] ?? ''));
+        $note = $this->normalizeDisplayText((string) ($transaction['note'] ?? ''));
         if ('' !== $note) {
             return mb_substr($note, 0, 255);
         }
@@ -297,12 +297,30 @@ class RevolutTransactionMapper
     {
         $preferred = $isDebit ? ($transaction['creditor']['name'] ?? null) : ($transaction['debtor']['name'] ?? null);
         $fallback = $isDebit ? ($transaction['debtor']['name'] ?? null) : ($transaction['creditor']['name'] ?? null);
-        $value = trim((string) ($preferred ?? $fallback ?? ''));
+        $value = $this->normalizeDisplayText((string) ($preferred ?? $fallback ?? ''));
         if ('' !== $value) {
             return $value;
         }
 
         return $isDebit ? 'Revolut expense' : 'Revolut income';
+    }
+
+    private function normalizeDisplayText(string $value): string
+    {
+        $trimmed = trim($value);
+        if ('' === $trimmed) {
+            return '';
+        }
+
+        $cleaned = preg_replace('/\.[a-z]{3}\d{8,}$/iu', '', $trimmed);
+        if (is_string($cleaned)) {
+            $cleaned = trim($cleaned);
+            if ('' !== $cleaned) {
+                return $cleaned;
+            }
+        }
+
+        return $trimmed;
     }
 
     private function enableNotes(array $transaction): ?string
